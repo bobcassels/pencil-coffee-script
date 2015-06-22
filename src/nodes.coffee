@@ -692,7 +692,7 @@ exports.Block = class Block extends Base
 # JavaScript without translation, such as: strings, numbers,
 # `true`, `false`, `null`...
 exports.Literal = class Literal extends Base
-  constructor: (@value) ->
+  constructor: (@value, @kind) ->
     if not @value? then throw new Error "whoops!"
     super()
 
@@ -715,8 +715,15 @@ exports.Literal = class Literal extends Base
     return this if @value is 'continue' and not o?.loop
 
   compileNode: (o) ->
-    # Don't tun this code through @makeCode below....
+    # Don't run this code through @makeCode below....
     return @icedCompileIced o if @icedLoopFlag and @icedIsJump()
+
+    if o.schemeNumbers
+      if @kind == 'NUMBER'
+        if HEXNUM.test @value
+          return (new Value new Literal schemeNumberValue @value.replace(/0x/i, ''), 16).compileNode o
+        else
+          return (new Value new Literal schemeNumberValue @value).compileNode o
 
     code = if @value is 'this'
       if o.scope.method?.bound then o.scope.method.context else @value
@@ -2271,6 +2278,10 @@ exports.Op = class Op extends Base
     call.do = yes
     call
 
+  compileSchemeArithmetic: (o, name, schemeFn) ->
+    sfn = new Value new Literal schemeNumberFunction name, schemeFn
+    new Call(sfn, [@first, @second]).compileNode o
+
   compileNode: (o) ->
     isChain = @isChainable() and @first.isChainable()
     # In chains, there's no need to wrap bare obj literals in parens,
@@ -2280,6 +2291,35 @@ exports.Op = class Op extends Base
       @error 'delete operand may not be argument or var'
     if @operator in ['--', '++'] and @first.unwrapAll().value in STRICT_PROSCRIBED
       @error "cannot increment/decrement \"#{@first.unwrapAll().value}\""
+    if o.schemeNumbers
+      if @isUnary()
+        switch @operator
+          when '+'
+            sfn = new Value new Literal utility('SchemeNumber')
+            return new Call(sfn, [@first]).compileNode o
+          when '-'
+            sfn = new Value new Literal schemeNumberFunction 'neg', '-'
+            return new Call(sfn, [@first]).compileNode o
+      else
+        schemeOp = {
+          '/':  ['div'],
+          '*':  ['mul'],
+          # TODO: Call something that will check for strings, then call Scheme +.
+          '+':  ['add'],
+          '-':  ['sub'],
+          '**': ['expt', 'expt'],
+          '//': ['floordiv', 'div'],
+          # TODO: This isn't quite right.
+          '%':  ['modTruncate', 'mod0'],
+          '%%': ['mod', 'mod'],
+          # TODO: Figure out how to handle equality comparisons
+          '<':  ['lt'],
+          '<=': ['le'],
+          '>':  ['gt'],
+          '>=': ['ge']
+          }[@operator]
+        if schemeOp
+          return @compileSchemeArithmetic o, schemeOp[0], schemeOp[1] or @operator
     return @compileYield     o if @isYield()
     return @compileUnary     o if @isUnary()
     return @compileChain     o if isChain
@@ -3526,6 +3566,10 @@ UTILITIES =
     }
   "
 
+  SchemeNumber: -> """
+    require('./../javascript-bignum/schemeNumber').SchemeNumber
+  """
+
   modulo: -> """
     function(a, b) { return (+a % (b = +b) + b) % b; }
   """
@@ -3551,8 +3595,9 @@ IDENTIFIER = /// ^ #{IDENTIFIER_STR} $ ///
 SIMPLENUM  = /^[+-]?\d+$/
 HEXNUM = /^[+-]?0x[\da-f]+/i
 NUMBER    = ///^[+-]?(?:
-  0x[\da-f]+ |              # hex
-  \d*\.?\d+ (?:e[+-]?\d+)?  # decimal
+  0x[\da-f]+ |             # hex
+  \d+\/\d+   |             # ratio
+  \d*\.?\d+ (?:e[+-]?\d+)? # decimal
 )$///i
 
 METHOD_DEF = /// ^
@@ -3575,6 +3620,34 @@ IS_REGEX = /^\//
 utility = (name) ->
   ref = "__#{name}"
   Scope.root.assign ref, UTILITIES[name]()
+  ref
+
+schemeNumberFunction = (name, schemeFn) ->
+  ref = "__#{name}"
+  schemeNumber = utility('SchemeNumber')
+  Scope.root.assign ref, schemeNumber + ".fn['#{schemeFn}']"
+  ref
+
+schemeNumberValue = (string, radix = 10) ->
+  # Canonicalize number.
+  # string = string.
+           # Remove leading zeros.
+           # replace(/[\/+-](0+)[0-9]/, '').
+           # Remove integer 0 if there are fraction digits.
+           # replace(/^(0)\.[0-9]/, '').
+           # replace(/[^0-9](0)\.[0-9]/, '')
+  #          # Remove trailing fraction zeros.
+  #          replace(/\.[0-9]+(0+)$/, '').
+  #          replace(/\.[0-9]+(0+)[i\/+-]/, '').
+  name = string.
+         replace('/', 'D').
+         replace('-', 'M').
+         replace('+', 'P').
+         replace('.', '_')
+  ref = "__n#{if radix == 10 then '' else radix}_#{name}"
+  stringToNumber = schemeNumberFunction('snum', 'string->number')
+  args = if radix == 10 then "('#{string}')" else "('#{string}', #{radix})"
+  Scope.root.assign ref, stringToNumber + args
   ref
 
 multident = (code, tab) ->

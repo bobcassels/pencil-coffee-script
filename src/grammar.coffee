@@ -138,8 +138,8 @@ grammar =
   # Alphanumerics are separated from the other **Literal** matchers because
   # they can also serve as keys in object literals.
   AlphaNumeric: [
-    o 'NUMBER',                                 -> new Literal $1
-    o 'STRING',                                 -> new Literal $1
+    o 'NUMBER',                                 -> new Literal $1, 'NUMBER'
+    o 'STRING',                                 -> new Literal $1, 'STRING'
   ]
 
   # All of our immediate values. Generally these can be passed straight
@@ -427,8 +427,28 @@ grammar =
   # where only values are accepted, wrapping it in parentheses will always do
   # the trick.
   Parenthetical: [
-    o '( Body )',                               -> new Parens $2
-    o '( INDENT Body OUTDENT )',                -> new Parens $3
+    o '( Body )',                               ->
+      # Skip parens if it's just a literal.
+      if $2 instanceof yy.Block and
+         $2.expressions.length == 1 and
+         $2.expressions[0] instanceof yy.Value and
+         $2.expressions[0].bareLiteral(yy.Literal) and
+         # TODO: Figure out other cases where we can lose the parens.
+         $2.expressions[0].base.kind == 'NUMBER'
+        $2.expressions[0]
+      else
+        new Parens $2
+    o '( INDENT Body OUTDENT )',                ->
+      # Skip parens if it's just a literal.
+      if $3 instanceof yy.Block and
+         $3.expressions.length == 1 and
+         $3.expressions[0] instanceof yy.Value and
+         $3.expressions[0].bareLiteral(yy.Literal) and
+         # TODO: Figure out other cases where we can lose the parens.
+         $3.expressions[0].base.kind == 'NUMBER'
+        $3.expressions[0]
+      else
+        new Parens $3
   ]
 
   # The condition portion of a while loop.
@@ -546,8 +566,27 @@ grammar =
   Operation: [
     o 'UNARY Expression',                       -> new Op $1 , $2
     o 'UNARY_MATH Expression',                  -> new Op $1 , $2
-    o '-     Expression',                      (-> new Op '-', $2), prec: 'UNARY_MATH'
-    o '+     Expression',                      (-> new Op '+', $2), prec: 'UNARY_MATH'
+    o '-     Expression',                      (->
+                                                if $2 instanceof yy.Value and
+                                                   $2.bareLiteral(yy.Literal) and
+                                                   $2.base.kind == 'NUMBER'
+                                                  value = $2.base.value
+                                                  # Strip off leading +, if present.
+                                                  value = value[1..] if /^\+/.test(value)
+                                                  negated = if /^-/.test(value) then value[1..] else "-#{value}"
+                                                  new Value new Literal(negated, 'NUMBER')
+                                                else
+                                                  new Op '-', $2
+                                               ), prec: 'UNARY_MATH'
+    o '+     Expression',                      (->
+                                                if $2 instanceof yy.Value and
+                                                   $2.bareLiteral(yy.Literal) and
+                                                   $2.base.kind == 'NUMBER'
+                                                  # If it's already a number, just ignore the +.
+                                                  $2
+                                                else
+                                                  new Op '+', $2
+                                               ), prec: 'UNARY_MATH'
     o 'YIELD Statement',                        -> new Op $1 , $2
     o 'YIELD Expression',                       -> new Op $1 , $2
     o 'YIELD FROM Expression',                  -> new Op $1.concat($2) , $3
@@ -563,7 +602,38 @@ grammar =
     o 'Expression +  Expression',               -> new Op '+' , $1, $3
     o 'Expression -  Expression',               -> new Op '-' , $1, $3
 
-    o 'Expression MATH     Expression',         -> new Op $2, $1, $3
+    o 'Expression MATH     Expression',         ->
+      if $2 is '/' and
+         # Try to make a rational literal. If we don't have rational numbers,
+         # Javascript will interpret the literal value as a division, and do it
+         # at run time.
+         $1 instanceof yy.Value and $1.bareLiteral(yy.Literal) and
+         $1.base.kind == 'NUMBER' and /^[-+]?\d+(\/\d+)?$/.test($1.base.value) and
+         $3 instanceof yy.Value and $3.bareLiteral(yy.Literal) and
+         $3.base.kind == 'NUMBER' and /^[-+]?\d+(\/\d+)?$/.test($3.base.value)
+        aMatch = /^([-+])?(\d+)(\/(\d+))?$/.exec($1.base.value)
+        bMatch = /^([-+])?(\d+)(\/(\d+))?$/.exec($3.base.value)
+        sign = if (aMatch[1] or '+') == (bMatch[1] or '+') then '' else '-'
+        aNum = +aMatch[2]
+        aDen = +(aMatch[4] or 1)
+        bNum = +bMatch[2]
+        bDen = +(bMatch[4] or 1)
+        rNum = aNum * bDen
+        rDen = aDen * bNum
+        # Make sure rNum and rDen are exact, with Javascript numbers.
+        if rNum < 2**53 and 0 < rDen < 2**53
+          gcd = rNum
+          rem = rDen
+          [gcd, rem] = [rem, gcd % rem] until rem == 0
+          rNum = rNum / gcd
+          rDen = rDen / gcd
+          ratio = if rDen == 1 then rNum else "#{rNum}/#{rDen}"
+          new Value new Literal "#{sign}#{ratio}", 'NUMBER'
+        else
+          new Op $2, $1, $3
+      else
+        new Op $2, $1, $3
+
     o 'Expression **       Expression',         -> new Op $2, $1, $3
     o 'Expression SHIFT    Expression',         -> new Op $2, $1, $3
     o 'Expression COMPARE  Expression',         -> new Op $2, $1, $3
