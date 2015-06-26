@@ -718,12 +718,15 @@ exports.Literal = class Literal extends Base
     # Don't run this code through @makeCode below....
     return @icedCompileIced o if @icedLoopFlag and @icedIsJump()
 
-    if o.schemeNumbers
-      if @kind == 'NUMBER'
+    if @kind == 'NUMBER'
+      if o.schemeNumbers
         if HEXNUM.test @value
           return (new Value new Literal schemeNumberValue @value.replace(/0x/i, ''), 16).compileNode o
         else
           return (new Value new Literal schemeNumberValue @value).compileNode o
+      else
+        if /i$/i.test @value
+          @error "can't use imaginary values unless using Scheme numbers"
 
     code = if @value is 'this'
       if o.scope.method?.bound then o.scope.method.context else @value
@@ -3643,7 +3646,8 @@ schemeNumberValue = (string, radix = 10) ->
          replace('/', 'D').
          replace('-', 'M').
          replace('+', 'P').
-         replace('.', '_')
+         replace('.', '_').
+         replace('I', 'i')
   ref = "__n#{if radix == 10 then '' else radix}_#{name}"
   stringToNumber = schemeNumberFunction('snum', 'string->number')
   args = if radix == 10 then "('#{string}')" else "('#{string}', #{radix})"

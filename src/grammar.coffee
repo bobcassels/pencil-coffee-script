@@ -37,8 +37,9 @@ o = (patternString, action, options) ->
   action = if match = unwrap.exec action then match[1] else "(#{action}())"
 
   # All runtime functions we need are defined on "yy"
-  action = action.replace /\bnew /g, '$&yy.'
-  action = action.replace /\b(?:Block\.wrap|extend)\b/g, 'yy.$&'
+  action = action.replace /\b(?:Block|Literal|Value|extend)\b/g, 'yy.$&'
+  # Add "yy." in front of word after "new", if it doesn't already have "yy."
+  action = action.replace /\bnew (?!yy\.)/g, '$&yy.'
 
   # Returns a function which adds location data to the first parameter passed
   # in, and returns the parameter.  If the parameter is not a node, it will
@@ -429,10 +430,10 @@ grammar =
   Parenthetical: [
     o '( Body )',                               ->
       # Skip parens if it's just a literal.
-      if $2 instanceof yy.Block and
+      if $2 instanceof Block and
          $2.expressions.length == 1 and
-         $2.expressions[0] instanceof yy.Value and
-         $2.expressions[0].bareLiteral(yy.Literal) and
+         $2.expressions[0] instanceof Value and
+         $2.expressions[0].bareLiteral(Literal) and
          # TODO: Figure out other cases where we can lose the parens.
          $2.expressions[0].base.kind == 'NUMBER'
         $2.expressions[0]
@@ -440,10 +441,10 @@ grammar =
         new Parens $2
     o '( INDENT Body OUTDENT )',                ->
       # Skip parens if it's just a literal.
-      if $3 instanceof yy.Block and
+      if $3 instanceof Block and
          $3.expressions.length == 1 and
-         $3.expressions[0] instanceof yy.Value and
-         $3.expressions[0].bareLiteral(yy.Literal) and
+         $3.expressions[0] instanceof Value and
+         $3.expressions[0].bareLiteral(Literal) and
          # TODO: Figure out other cases where we can lose the parens.
          $3.expressions[0].base.kind == 'NUMBER'
         $3.expressions[0]
@@ -567,8 +568,8 @@ grammar =
     o 'UNARY Expression',                       -> new Op $1 , $2
     o 'UNARY_MATH Expression',                  -> new Op $1 , $2
     o '-     Expression',                      (->
-                                                if $2 instanceof yy.Value and
-                                                   $2.bareLiteral(yy.Literal) and
+                                                if $2 instanceof Value and
+                                                   $2.bareLiteral(Literal) and
                                                    $2.base.kind == 'NUMBER'
                                                   value = $2.base.value
                                                   # Strip off leading +, if present.
@@ -579,8 +580,8 @@ grammar =
                                                   new Op '-', $2
                                                ), prec: 'UNARY_MATH'
     o '+     Expression',                      (->
-                                                if $2 instanceof yy.Value and
-                                                   $2.bareLiteral(yy.Literal) and
+                                                if $2 instanceof Value and
+                                                   $2.bareLiteral(Literal) and
                                                    $2.base.kind == 'NUMBER'
                                                   # If it's already a number, just ignore the +.
                                                   $2
@@ -603,32 +604,47 @@ grammar =
     o 'Expression -  Expression',               -> new Op '-' , $1, $3
 
     o 'Expression MATH     Expression',         ->
+      # Signed integer or ratio.
+      RATIONAL = ///^ ([+-]?) (\d+) (\/(\d+))? (i?) $///
+
+      rationalParts = (string) ->
+       match = RATIONAL.exec(string)
+       [match[1] != '-',   # positive
+        +match[2],         # numerator
+        +(match[4] or 1),  # denominator
+        match[5] != '']    # imaginary
+
+      gcd = (a, b) ->
+        [a, b] = [b, a % b] until b == 0
+        a
+
+      rationalReduce = (num, den) ->
+        # Make sure num and den are exact, with Javascript numbers.
+        if num < 2**53 and 0 < den < 2**53
+          factor = gcd(num, den)
+          num = num / factor
+          den = den / factor
+          if den == 1 then num else "#{num}/#{den}"
+        else
+          null
+
       if $2 is '/' and
          # Try to make a rational literal. If we don't have rational numbers,
          # Javascript will interpret the literal value as a division, and do it
          # at run time.
-         $1 instanceof yy.Value and $1.bareLiteral(yy.Literal) and
-         $1.base.kind == 'NUMBER' and /^[-+]?\d+(\/\d+)?$/.test($1.base.value) and
-         $3 instanceof yy.Value and $3.bareLiteral(yy.Literal) and
-         $3.base.kind == 'NUMBER' and /^[-+]?\d+(\/\d+)?$/.test($3.base.value)
-        aMatch = /^([-+])?(\d+)(\/(\d+))?$/.exec($1.base.value)
-        bMatch = /^([-+])?(\d+)(\/(\d+))?$/.exec($3.base.value)
-        sign = if (aMatch[1] or '+') == (bMatch[1] or '+') then '' else '-'
-        aNum = +aMatch[2]
-        aDen = +(aMatch[4] or 1)
-        bNum = +bMatch[2]
-        bDen = +(bMatch[4] or 1)
-        rNum = aNum * bDen
-        rDen = aDen * bNum
-        # Make sure rNum and rDen are exact, with Javascript numbers.
-        if rNum < 2**53 and 0 < rDen < 2**53
-          gcd = rNum
-          rem = rDen
-          [gcd, rem] = [rem, gcd % rem] until rem == 0
-          rNum = rNum / gcd
-          rDen = rDen / gcd
-          ratio = if rDen == 1 then rNum else "#{rNum}/#{rDen}"
-          new Value new Literal "#{sign}#{ratio}", 'NUMBER'
+         $1 instanceof Value and $1.bareLiteral(Literal) and
+         $1.base.kind == 'NUMBER' and RATIONAL.test($1.base.value) and
+         $3 instanceof Value and $3.bareLiteral(Literal) and
+         $3.base.kind == 'NUMBER' and RATIONAL.test($3.base.value)
+        [aPositive, aNum, aDen, aImag] = rationalParts($1.base.value)
+        [bPositive, bNum, bDen, bImag] = rationalParts($3.base.value)
+        positive = aPositive == bPositive
+        rational = rationalReduce(aNum * bDen, aDen * bNum);
+        imag = if aImag == bImag then '' else 'i'
+        positive = not positive if !aImag and bImag
+        sign = if positive then '' else '-'
+        if rational
+          new Value new Literal "#{sign}#{rational}#{imag}", 'NUMBER'
         else
           new Op $2, $1, $3
       else
