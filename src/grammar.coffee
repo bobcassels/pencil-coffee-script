@@ -37,6 +37,7 @@ o = (patternString, action, options) ->
   action = if match = unwrap.exec action then match[1] else "(#{action}())"
 
   # All runtime functions we need are defined on "yy"
+  # Add "yy." in front of some things, so we can use them in actions.
   action = action.replace /\b(?:Block|Literal|Value|extend)\b/g, 'yy.$&'
   # Add "yy." in front of word after "new", if it doesn't already have "yy."
   action = action.replace /\bnew (?!yy\.)/g, '$&yy.'
