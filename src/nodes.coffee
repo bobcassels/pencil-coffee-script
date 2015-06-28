@@ -847,6 +847,7 @@ exports.Value = class Value extends Base
   isRange        : -> @bareLiteral(Range)
   isComplex      : -> @hasProperties() or @base.isComplex()
   isAssignable   : -> @hasProperties() or @base.isAssignable()
+  isNumber       : -> @bareLiteral(Literal) and @base.kind == 'NUMBER'
   isSimpleNumber : -> @bareLiteral(Literal) and SIMPLENUM.test @base.value
   isString       : -> @bareLiteral(Literal) and IS_STRING.test @base.value
   isRegex        : -> @bareLiteral(Literal) and IS_REGEX.test @base.value
