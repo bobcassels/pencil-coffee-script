@@ -37,10 +37,8 @@ o = (patternString, action, options) ->
   action = if match = unwrap.exec action then match[1] else "(#{action}())"
 
   # All runtime functions we need are defined on "yy"
-  # Add "yy." in front of some things, so we can use them in actions.
-  action = action.replace /\b(?:Block|Literal|Value|extend)\b/g, 'yy.$&'
-  # Add "yy." in front of word after "new", if it doesn't already have "yy."
-  action = action.replace /\bnew (?!yy\.)/g, '$&yy.'
+  action = action.replace /\b(new|instanceof) /g, '$&yy.'
+  action = action.replace /\b(?:Block\.wrap|extend)\b/g, 'yy.$&'
 
   # Returns a function which adds location data to the first parameter passed
   # in, and returns the parameter.  If the parameter is not a node, it will
@@ -434,9 +432,8 @@ grammar =
       if $2 instanceof Block and
          $2.expressions.length == 1 and
          $2.expressions[0] instanceof Value and
-         $2.expressions[0].bareLiteral(Literal) and
          # TODO: Figure out other cases where we can lose the parens.
-         $2.expressions[0].base.kind == 'NUMBER'
+         $2.expressions[0].isNumber()
         $2.expressions[0]
       else
         new Parens $2
@@ -445,9 +442,8 @@ grammar =
       if $3 instanceof Block and
          $3.expressions.length == 1 and
          $3.expressions[0] instanceof Value and
-         $3.expressions[0].bareLiteral(Literal) and
          # TODO: Figure out other cases where we can lose the parens.
-         $3.expressions[0].base.kind == 'NUMBER'
+         $3.expressions[0].isNumber()
         $3.expressions[0]
       else
         new Parens $3
@@ -570,8 +566,7 @@ grammar =
     o 'UNARY_MATH Expression',                  -> new Op $1 , $2
     o '-     Expression',                      (->
                                                 if $2 instanceof Value and
-                                                   $2.bareLiteral(Literal) and
-                                                   $2.base.kind == 'NUMBER'
+                                                   $2.isNumber()
                                                   value = $2.base.value
                                                   # Strip off leading +, if present.
                                                   value = value[1..] if /^\+/.test(value)
@@ -582,8 +577,7 @@ grammar =
                                                ), prec: 'UNARY_MATH'
     o '+     Expression',                      (->
                                                 if $2 instanceof Value and
-                                                   $2.bareLiteral(Literal) and
-                                                   $2.base.kind == 'NUMBER'
+                                                   $2.isNumber()
                                                   # If it's already a number, just ignore the +.
                                                   $2
                                                 else
@@ -633,10 +627,8 @@ grammar =
          # Try to make a rational literal. If we don't have rational numbers,
          # Javascript will interpret the literal value as a division, and do it
          # at run time.
-         $1 instanceof Value and $1.bareLiteral(Literal) and
-         $1.base.kind == 'NUMBER' and RATIONAL.test($1.base.value) and
-         $3 instanceof Value and $3.bareLiteral(Literal) and
-         $3.base.kind == 'NUMBER' and RATIONAL.test($3.base.value)
+         $1 instanceof Value and $1.isNumber() and RATIONAL.test($1.base.value) and
+         $3 instanceof Value and $3.isNumber() and RATIONAL.test($3.base.value)
         [aPositive, aNum, aDen, aImag] = rationalParts($1.base.value)
         [bPositive, bNum, bDen, bImag] = rationalParts($3.base.value)
         positive = aPositive == bPositive
