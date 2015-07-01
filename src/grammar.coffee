@@ -38,7 +38,7 @@ o = (patternString, action, options) ->
 
   # All runtime functions we need are defined on "yy"
   action = action.replace /\b(new|instanceof) /g, '$&yy.'
-  action = action.replace /\b(?:Block\.wrap|extend)\b/g, 'yy.$&'
+  action = action.replace /\b(?:Block\.wrap|extend|ConstantFold)\b/g, 'yy.$&'
 
   # Returns a function which adds location data to the first parameter passed
   # in, and returns the parameter.  If the parameter is not a node, it will
@@ -138,8 +138,8 @@ grammar =
   # Alphanumerics are separated from the other **Literal** matchers because
   # they can also serve as keys in object literals.
   AlphaNumeric: [
-    o 'NUMBER',                                 -> new Literal $1, 'NUMBER'
-    o 'STRING',                                 -> new Literal $1, 'STRING'
+    o 'NUMBER',                                 -> new Literal $1, 'Number'
+    o 'STRING',                                 -> new Literal $1, 'String'
   ]
 
   # All of our immediate values. Generally these can be passed straight
@@ -147,7 +147,7 @@ grammar =
   Literal: [
     o 'AlphaNumeric'
     o 'JS',                                     -> new Literal $1
-    o 'REGEX',                                  -> new Literal $1
+    o 'REGEX',                                  -> new Literal $1, 'RegExp'
     o 'DEBUGGER',                               -> new Literal $1
     o 'UNDEFINED',                              -> new Undefined
     o 'NULL',                                   -> new Null
@@ -431,7 +431,6 @@ grammar =
       # Skip parens if it's just a literal.
       if $2 instanceof Block and
          $2.expressions.length == 1 and
-         $2.expressions[0] instanceof Value and
          # TODO: Figure out other cases where we can lose the parens.
          $2.expressions[0].isNumber()
         $2.expressions[0]
@@ -441,7 +440,6 @@ grammar =
       # Skip parens if it's just a literal.
       if $3 instanceof Block and
          $3.expressions.length == 1 and
-         $3.expressions[0] instanceof Value and
          # TODO: Figure out other cases where we can lose the parens.
          $3.expressions[0].isNumber()
         $3.expressions[0]
@@ -565,24 +563,19 @@ grammar =
     o 'UNARY Expression',                       -> new Op $1 , $2
     o 'UNARY_MATH Expression',                  -> new Op $1 , $2
     o '-     Expression',                      (->
-                                                if $2 instanceof Value and
-                                                   $2.isNumber()
-                                                  value = $2.base.value
-                                                  # Strip off leading +, if present.
-                                                  value = value[1..] if /^\+/.test(value)
-                                                  negated = if /^-/.test(value) then value[1..] else "-#{value}"
-                                                  new Value new Literal(negated, 'NUMBER')
-                                                else
-                                                  new Op '-', $2
-                                               ), prec: 'UNARY_MATH'
+      if $2.isNumber()
+        result = ConstantFold.negate($2.base.value)
+        if result
+          return new Value new Literal result, 'Number'
+      new Op '-', $2
+      ), prec: 'UNARY_MATH'
     o '+     Expression',                      (->
-                                                if $2 instanceof Value and
-                                                   $2.isNumber()
-                                                  # If it's already a number, just ignore the +.
-                                                  $2
-                                                else
-                                                  new Op '+', $2
-                                               ), prec: 'UNARY_MATH'
+      if $2.isNumber()
+        # If it's already a number, just ignore the +.
+        $2
+      else
+        new Op '+', $2
+      ), prec: 'UNARY_MATH'
     o 'YIELD Statement',                        -> new Op $1 , $2
     o 'YIELD Expression',                       -> new Op $1 , $2
     o 'YIELD FROM Expression',                  -> new Op $1.concat($2) , $3
@@ -595,53 +588,27 @@ grammar =
     # [The existential operator](http://jashkenas.github.com/coffee-script/#existence).
     o 'Expression ?',                           -> new Existence $1
 
-    o 'Expression +  Expression',               -> new Op '+' , $1, $3
-    o 'Expression -  Expression',               -> new Op '-' , $1, $3
+    o 'Expression +  Expression',               ->
+      if $1.isNumber() and $3.isNumber()
+        result = ConstantFold.add($1.base.value, $3.base.value)
+        if result
+          return new Value new Literal result, 'Number'
+      new Op '+' , $1, $3
+
+    o 'Expression -  Expression',               ->
+      if $1.isNumber() and $3.isNumber()
+        result = ConstantFold.sub($1.base.value, $3.base.value)
+        if result
+          return new Value new Literal result, 'Number'
+      new Op '-' , $1, $3
 
     o 'Expression MATH     Expression',         ->
-      # Signed integer or ratio.
-      RATIONAL = ///^ ([+-]?) (\d+) (\/(\d+))? (i?) $///
-
-      rationalParts = (string) ->
-       match = RATIONAL.exec(string)
-       [match[1] != '-',   # positive
-        +match[2],         # numerator
-        +(match[4] or 1),  # denominator
-        match[5] != '']    # imaginary
-
-      gcd = (a, b) ->
-        [a, b] = [b, a % b] until b == 0
-        a
-
-      rationalReduce = (num, den) ->
-        # Make sure num and den are exact, with Javascript numbers.
-        if num < 2**53 and 0 < den < 2**53
-          factor = gcd(num, den)
-          num = num / factor
-          den = den / factor
-          if den == 1 then num else "#{num}/#{den}"
-        else
-          null
-
-      if $2 is '/' and
-         # Try to make a rational literal. If we don't have rational numbers,
-         # Javascript will interpret the literal value as a division, and do it
-         # at run time.
-         $1 instanceof Value and $1.isNumber() and RATIONAL.test($1.base.value) and
-         $3 instanceof Value and $3.isNumber() and RATIONAL.test($3.base.value)
-        [aPositive, aNum, aDen, aImag] = rationalParts($1.base.value)
-        [bPositive, bNum, bDen, bImag] = rationalParts($3.base.value)
-        positive = aPositive == bPositive
-        rational = rationalReduce(aNum * bDen, aDen * bNum);
-        imag = if aImag == bImag then '' else 'i'
-        positive = not positive if !aImag and bImag
-        sign = if positive then '' else '-'
-        if rational
-          new Value new Literal "#{sign}#{rational}#{imag}", 'NUMBER'
-        else
-          new Op $2, $1, $3
-      else
-        new Op $2, $1, $3
+      if $1.isNumber() and $3.isNumber()
+        if $2 == '/'
+          result = ConstantFold.div($1.base.value, $3.base.value)
+          if result
+            return new Value new Literal result, 'Number'
+      new Op $2, $1, $3
 
     o 'Expression **       Expression',         -> new Op $2, $1, $3
     o 'Expression SHIFT    Expression',         -> new Op $2, $1, $3
