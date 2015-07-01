@@ -744,7 +744,7 @@ exports.Literal = class Literal extends Base
     [@makeCode answer]
 
   toString: ->
-    ' "' + @value + '"'
+    ' "' + @value + '"' + if @kind then ", #{@kind}" else ''
 
   icedWalkAst : (parent, o) ->
     if @value is 'arguments' and o.foundAwaitFunc
@@ -857,11 +857,9 @@ exports.Value = class Value extends Base
   isSimpleNumber   : -> @bareLiteral(Literal) and SIMPLENUM.test @base.value
   isString         : -> @bareLiteral(Literal) and @base.kind == 'String'
   isNumberOrString : -> @bareLiteral(Literal) and @base.kind in ['Number', 'String']
-  isPrimitive      : -> @bareLiteral(Literal) and
-                        @base.value in ['Number', 'String', 'Null', 'Undefined']
   isRegex          : -> @bareLiteral(Literal) and @base.kind == 'RegExp'
-  # Maybe add more later?
-  isLiteralObject  : -> @bareLiteral(Literal) and @base.kind == 'RegExp'
+  isLiteralObject  : -> @bareLiteral(Literal) and
+                        @base.kind in ['Number', 'String', 'RegExp']
   isAtomic         : ->
     for node in @properties.concat @base
       return no if node.soak or node instanceof Call
