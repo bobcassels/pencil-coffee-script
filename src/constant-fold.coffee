@@ -149,7 +149,30 @@ addSub = (value1, value2, operation) ->
       imagSign = if imag < 0 then '' else '+'
       "#{canonicalizeInexact(real)}#{imagSign}#{canonicalizeInexact(imag)}i"
 
-exports.add = (value1, value2) -> addSub(value1, value2, '+')
+IS_STRING = /^['"]/
+
+exports.add = (value1, value2) ->
+  if IS_STRING.test(value1)
+    if IS_STRING.test(value2)
+      # Only handle the case when both are strings, here.
+      # When one is a number and one is a string, then the
+      # string will be converted to a number. That conversion might differ
+      # depending on whether we are using Scheme numbers or not.
+      # With Scheme numbers, "1" and "1.0" will differ.
+      # With Javascript numbers, they will not.
+      string = eval(value1) + eval(value2)
+      # Turn this back into a string literal.
+      # Escape the newlines.
+      string = string.replace(/\n/g, '\\n')
+      if '"' in string
+        if "'" in string
+          "\"#{string.replace /"/g, '\\"'}\""
+        else
+          "'#{string}'"
+      else
+        "\"#{string}\""
+  else if !IS_STRING.test(value2)
+    addSub(value1, value2, '+')
 
 exports.sub = (value1, value2) -> addSub(value1, value2, '-')
 

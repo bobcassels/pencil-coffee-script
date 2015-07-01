@@ -432,7 +432,7 @@ grammar =
       if $2 instanceof Block and
          $2.expressions.length == 1 and
          # TODO: Figure out other cases where we can lose the parens.
-         $2.expressions[0].isNumber()
+         $2.expressions[0].isLiteralObject()
         $2.expressions[0]
       else
         new Parens $2
@@ -441,7 +441,7 @@ grammar =
       if $3 instanceof Block and
          $3.expressions.length == 1 and
          # TODO: Figure out other cases where we can lose the parens.
-         $3.expressions[0].isNumber()
+         $3.expressions[0].isLiteralObject()
         $3.expressions[0]
       else
         new Parens $3
@@ -589,10 +589,12 @@ grammar =
     o 'Expression ?',                           -> new Existence $1
 
     o 'Expression +  Expression',               ->
-      if $1.isNumber() and $3.isNumber()
+      if $1.isNumberOrString() and $3.isNumberOrString()
         result = ConstantFold.add($1.base.value, $3.base.value)
         if result
-          return new Value new Literal result, 'Number'
+          kind = if /^['"]/.test(result) then 'String' else 'Number'
+          return new Value new Literal result, kind
+
       new Op '+' , $1, $3
 
     o 'Expression -  Expression',               ->
