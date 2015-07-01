@@ -17,13 +17,14 @@ addLocationDataFn, locationDataToString, throwSyntaxError} = require './helpers'
 # Functions required by parser
 exports.extend = extend
 exports.addLocationDataFn = addLocationDataFn
+exports.ConstantFold = require './constant-fold'
 
 # Constant functions for nodes that don't need customization.
 YES     = -> yes
 NO      = -> no
 THIS    = -> this
 NEGATE  = -> @negated = not @negated; this
-NULL    = -> new Value new Literal 'null'
+NULL    = -> new Value new Literal 'null', 'NULL'
 
 #### CodeFragment
 
@@ -331,12 +332,17 @@ exports.Base = class Base
   # will override these with custom logic, if needed.
   children: []
 
-  isStatement     : NO
-  jumps           : NO
-  isComplex       : YES
-  isChainable     : NO
-  isAssignable    : NO
-  isLoop          : NO
+  isStatement      : NO
+  jumps            : NO
+  isComplex        : YES
+  isChainable      : NO
+  isAssignable     : NO
+  isLoop           : NO
+  isNumber         : NO
+  isString         : NO
+  isNumberOrString : NO
+  isPrimitive      : NO
+  isLiteralObject  : NO
 
   unwrap     : THIS
   unfoldSoak : NO
@@ -654,7 +660,7 @@ exports.Block = class Block extends Base
   icedAddRuntime : (foundDefer, foundAwait) ->
     index = 0
     while (node = @expressions[index]) and node instanceof Comment or
-        node instanceof Value and node.isString()
+        node.isString()
       index++
     @expressions.splice index, 0, (new IcedRuntime foundDefer, foundAwait)
 
@@ -718,12 +724,12 @@ exports.Literal = class Literal extends Base
     # Don't run this code through @makeCode below....
     return @icedCompileIced o if @icedLoopFlag and @icedIsJump()
 
-    if @kind == 'NUMBER'
+    if @kind == 'Number'
       if o.schemeNumbers
+        if EXACT_REAL.test(@value) or /i$/i.test(@value)
+          return (new Value new Literal schemeNumberValue @value).compileNode o
         if HEXNUM.test @value
           return (new Value new Literal schemeNumberValue @value.replace(/0x/i, ''), 16).compileNode o
-        else
-          return (new Value new Literal schemeNumberValue @value).compileNode o
       else
         if /i$/i.test @value
           @error "can't use imaginary values unless using Scheme numbers"
@@ -843,20 +849,25 @@ exports.Value = class Value extends Base
     not @properties.length and @base instanceof type
 
   # Some boolean checks for the benefit of other nodes.
-  isArray        : -> @bareLiteral(Arr)
-  isRange        : -> @bareLiteral(Range)
-  isComplex      : -> @hasProperties() or @base.isComplex()
-  isAssignable   : -> @hasProperties() or @base.isAssignable()
-  isNumber       : -> @bareLiteral(Literal) and @base.kind == 'NUMBER'
-  isSimpleNumber : -> @bareLiteral(Literal) and SIMPLENUM.test @base.value
-  isString       : -> @bareLiteral(Literal) and IS_STRING.test @base.value
-  isRegex        : -> @bareLiteral(Literal) and IS_REGEX.test @base.value
-  isAtomic       : ->
+  isArray          : -> @bareLiteral(Arr)
+  isRange          : -> @bareLiteral(Range)
+  isComplex        : -> @hasProperties() or @base.isComplex()
+  isAssignable     : -> @hasProperties() or @base.isAssignable()
+  isNumber         : -> @bareLiteral(Literal) and @base.kind == 'Number'
+  isSimpleNumber   : -> @bareLiteral(Literal) and SIMPLENUM.test @base.value
+  isString         : -> @bareLiteral(Literal) and @base.kind == 'String'
+  isNumberOrString : -> @bareLiteral(Literal) and @base.kind in ['Number', 'String']
+  isPrimitive      : -> @bareLiteral(Literal) and
+                        @base.value in ['Number', 'String', 'Null', 'Undefined']
+  isRegex          : -> @bareLiteral(Literal) and @base.kind == 'RegExp'
+  # Maybe add more later?
+  isLiteralObject  : -> @bareLiteral(Literal) and @base.kind == 'RegExp'
+  isAtomic         : ->
     for node in @properties.concat @base
       return no if node.soak or node instanceof Call
     yes
 
-  isNotCallable  : -> @isSimpleNumber() or @isString() or @isRegex() or
+  isNotCallable  : -> @isNumber() or @isString() or @isRegex() or
                       @isArray() or @isRange() or @isSplice() or @isObject()
 
   isStatement : (o)    -> not @properties.length and @base.isStatement o
@@ -1468,7 +1479,7 @@ exports.Class = class Class extends Base
     index = 0
     {expressions} = @body
     ++index while (node = expressions[index]) and node instanceof Comment or
-      node instanceof Value and node.isString()
+      node.isString()
     @directives = expressions.splice 0, index
 
   # Make sure that a constructor is defined for the class, and properly
@@ -2307,6 +2318,7 @@ exports.Op = class Op extends Base
       else
         schemeOp = {
           '/':  ['div'],
+          # TODO: Handle strings as input?
           '*':  ['mul'],
           # TODO: Call something that will check for strings, then call Scheme +.
           '+':  ['add'],
@@ -2317,6 +2329,7 @@ exports.Op = class Op extends Base
           '%':  ['modTruncate', 'mod0'],
           '%%': ['mod', 'mod'],
           # TODO: Figure out how to handle equality comparisons
+          # TODO: Handle strings
           '<':  ['lt'],
           '<=': ['le'],
           '>':  ['gt'],
@@ -3604,6 +3617,8 @@ NUMBER    = ///^[+-]?(?:
   \d*\.?\d+ (?:e[+-]?\d+)? # decimal
 )$///i
 
+EXACT_REAL = ///^ [+-]? \d+(\/\d+)? $///  # integer or ratio
+
 METHOD_DEF = /// ^
   (#{IDENTIFIER_STR})
   (\.prototype)?
@@ -3612,10 +3627,6 @@ METHOD_DEF = /// ^
     | \[(0x[\da-fA-F]+ | \d*\.?\d+ (?:[eE][+-]?\d+)?)\]
   )
 $ ///
-
-# Is a literal value a string/regex?
-IS_STRING = /^['"]/
-IS_REGEX = /^\//
 
 # Helper Functions
 # ----------------
@@ -3644,10 +3655,11 @@ schemeNumberValue = (string, radix = 10) ->
   #          replace(/\.[0-9]+(0+)$/, '').
   #          replace(/\.[0-9]+(0+)[i\/+-]/, '').
   name = string.
-         replace('/', 'D').
-         replace('-', 'M').
-         replace('+', 'P').
-         replace('.', '_').
+         replace(/^\+/, '').
+         replace(/\//g, 'D').
+         replace(/-/g, 'M').
+         replace(/\+/g, 'P').
+         replace(/\./g, '_').
          replace('I', 'i')
   ref = "__n#{if radix == 10 then '' else radix}_#{name}"
   stringToNumber = schemeNumberFunction('snum', 'string->number')
