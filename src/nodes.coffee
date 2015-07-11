@@ -659,8 +659,9 @@ exports.Block = class Block extends Base
   # Paste in a require or inline code, depending on the strategy requested
   icedAddRuntime : (foundDefer, foundAwait) ->
     index = 0
-    while (node = @expressions[index]) and node instanceof Comment or
-        node.isString()
+    while (node = @expressions[index]) and
+          (node instanceof Comment or node.isString())
+
       index++
     @expressions.splice index, 0, (new IcedRuntime foundDefer, foundAwait)
 
@@ -725,11 +726,10 @@ exports.Literal = class Literal extends Base
     return @icedCompileIced o if @icedLoopFlag and @icedIsJump()
 
     if @kind == 'Number'
-      if o.schemeNumbers
-        if EXACT_REAL.test(@value) or /i$/i.test(@value)
-          return (new Value new Literal schemeNumberValue @value).compileNode o
+      if o.numeric
         if HEXNUM.test @value
           return (new Value new Literal schemeNumberValue @value.replace(/0x/i, ''), 16).compileNode o
+        return (new Value new Literal schemeNumberValue @value).compileNode o
       else
         if /i$/i.test @value
           @error "can't use imaginary values unless using Scheme numbers"
@@ -1476,8 +1476,8 @@ exports.Class = class Class extends Base
   hoistDirectivePrologue: ->
     index = 0
     {expressions} = @body
-    ++index while (node = expressions[index]) and node instanceof Comment or
-      node.isString()
+    ++index while (node = expressions[index]) and
+                  (node instanceof Comment or node.isString())
     @directives = expressions.splice 0, index
 
   # Make sure that a constructor is defined for the class, and properly
@@ -2291,6 +2291,10 @@ exports.Op = class Op extends Base
     call.do = yes
     call
 
+  compileSchemeWrapperArithmetic: (o, wrapperName, name, schemeFn, makejs) ->
+    wfn = new Value new Literal schemeNumberFunctionWrapper wrapperName, name, schemeFn, makejs
+    new Call(wfn, [@first, @second]).compileNode o
+
   compileSchemeArithmetic: (o, name, schemeFn) ->
     sfn = new Value new Literal schemeNumberFunction name, schemeFn
     new Call(sfn, [@first, @second]).compileNode o
@@ -2304,7 +2308,7 @@ exports.Op = class Op extends Base
       @error 'delete operand may not be argument or var'
     if @operator in ['--', '++'] and @first.unwrapAll().value in STRICT_PROSCRIBED
       @error "cannot increment/decrement \"#{@first.unwrapAll().value}\""
-    if o.schemeNumbers
+    if o.numeric
       if @isUnary()
         switch @operator
           when '+'
@@ -2314,12 +2318,50 @@ exports.Op = class Op extends Base
             sfn = new Value new Literal schemeNumberFunction 'neg', '-'
             return new Call(sfn, [@first]).compileNode o
       else
+        switch @operator
+          when '+'
+            return @compileSchemeWrapperArithmetic o, 'add', 'add', '+',
+                     (schemeAdd, schemeNumber) ->
+                        """
+                        function (a, b) {
+                          if (typeof a === 'string') {
+                            return a + (typeof b === 'string' ? b : #{schemeNumber}(b).toString());
+                          } else if (typeof b === 'string') {
+                            return #{schemeNumber}(a).toString() + b;
+                          }
+                          return #{schemeAdd}(a, b);
+                        }
+                        """
+          when '==='
+            isNumber = schemeNumberFunction 'isn', 'number?'
+            return @compileSchemeWrapperArithmetic o, 'eql', 'eql', '=',
+                     (schemeEql, schemeNumber) ->
+                        """
+                        function (a, b) {
+                          if ((#{isNumber}(a) or typeof a === 'number') and
+                              (#{isNumber}(b) or typeof b === 'number')) {
+                            return #{schemeEql}(a, b);
+                         }
+                         return a === b;
+                        }
+                        """
+          when '!=='
+            isNumber = schemeNumberFunction 'isn', 'number?'
+            return @compileSchemeWrapperArithmetic o, 'neq', 'eql', '=',
+                     (schemeEql, schemeNumber) ->
+                        """
+                        function (a, b) {
+                          if ((#{isNumber}(a) or typeof a === 'number') and
+                              (#{isNumber}(b) or typeof b === 'number')) {
+                            return !#{schemeEql}(a, b);
+                         }
+                         return a !== b;
+                        }
+                        """
         schemeOp = {
           '/':  ['div'],
           # TODO: Handle strings as input?
           '*':  ['mul'],
-          # TODO: Call something that will check for strings, then call Scheme +.
-          '+':  ['add'],
           '-':  ['sub'],
           '**': ['expt', 'expt'],
           '//': ['floordiv', 'div'],
@@ -3582,7 +3624,7 @@ UTILITIES =
   "
 
   SchemeNumber: -> """
-    require('./../javascript-bignum/schemeNumber').SchemeNumber
+    typeof require === 'undefined' ? SchemeNumber : require('./../javascript-bignum/schemeNumber').SchemeNumber
   """
 
   modulo: -> """
@@ -3633,6 +3675,12 @@ $ ///
 utility = (name) ->
   ref = "__#{name}"
   Scope.root.assign ref, UTILITIES[name]()
+  ref
+
+schemeNumberFunctionWrapper = (wrapperName, name, schemeFn, makejs) ->
+  ref = "__f_#{wrapperName}"
+  sref = schemeNumberFunction(name, schemeFn)
+  Scope.root.assign ref, makejs(sref, utility('SchemeNumber'))
   ref
 
 schemeNumberFunction = (name, schemeFn) ->
