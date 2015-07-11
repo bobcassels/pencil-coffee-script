@@ -70,7 +70,7 @@ gcd = (a, b) ->
 # the .0 to distinguish exact from inexact.
 canonicalizeInexact = (x) ->
   xString = x.toString()
-  if /[\.eE]/.test(xString) then xString else "#{xString}.0"    
+  if /[.eE]|^[^\d]+$/.test(xString) then xString else "#{xString}.0"    
 
 canonicalizeRational = (numerator, denominator) ->
   factor = gcd(numerator, denominator)

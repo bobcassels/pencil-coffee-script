@@ -64,8 +64,8 @@ CoffeeScript.load = (url, callback, options = {}, hold = false) ->
 # This happens on page load.
 runScripts = ->
   scripts = window.document.getElementsByTagName 'script'
-  coffeetypes = ['text/coffeescript', 'text/literate-coffeescript']
-  coffees = (s for s in scripts when s.type in coffeetypes)
+  coffeetypes = ['text/coffeescript', 'text/literate-coffeescript', 'text/numeric-coffeescript']
+  coffees = (s for s in scripts when s.type.toLowerCase() in coffeetypes)
   index = 0
 
   execute = ->
@@ -77,7 +77,10 @@ runScripts = ->
 
   for script, i in coffees
     do (script, i) ->
-      options = literate: script.type is coffeetypes[1]
+      insensitiveType = script.type.toLowerCase()
+      options =
+        literate: insensitiveType is coffeetypes[1]
+        numeric:  insensitiveType is coffeetypes[2]
       if script.src
         CoffeeScript.load script.src,
           (param) ->
