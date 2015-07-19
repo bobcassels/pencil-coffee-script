@@ -342,7 +342,7 @@ exports.Base = class Base
   isString         : NO
   isNumberOrString : NO
   isPrimitive      : NO
-  isLiteralObject  : NO
+  isLiteralNSR     : NO
 
   unwrap     : THIS
   unfoldSoak : NO
@@ -858,14 +858,14 @@ exports.Value = class Value extends Base
   isString         : -> @bareLiteral(Literal) and @base.kind == 'String'
   isNumberOrString : -> @bareLiteral(Literal) and @base.kind in ['Number', 'String']
   isRegex          : -> @bareLiteral(Literal) and @base.kind == 'RegExp'
-  isLiteralObject  : -> @bareLiteral(Literal) and
+  isLiteralNSR     : -> @bareLiteral(Literal) and
                         @base.kind in ['Number', 'String', 'RegExp']
   isAtomic         : ->
     for node in @properties.concat @base
       return no if node.soak or node instanceof Call
     yes
 
-  isNotCallable  : -> @isNumber() or @isString() or @isRegex() or
+  isNotCallable  : -> @isLiteralNSR() or
                       @isArray() or @isRange() or @isSplice() or @isObject()
 
   isStatement : (o)    -> not @properties.length and @base.isStatement o
@@ -2308,8 +2308,9 @@ exports.Op = class Op extends Base
       @error 'delete operand may not be argument or var'
     if @operator in ['--', '++'] and @first.unwrapAll().value in STRICT_PROSCRIBED
       @error "cannot increment/decrement \"#{@first.unwrapAll().value}\""
-    if o.numeric
-      if @isUnary()
+    return @compileYield     o if @isYield()
+    if @isUnary()
+      if o.numeric
         switch @operator
           when '+'
             sfn = new Value new Literal utility('SchemeNumber')
@@ -2317,69 +2318,87 @@ exports.Op = class Op extends Base
           when '-'
             sfn = new Value new Literal schemeNumberFunction 'neg', '-'
             return new Call(sfn, [@first]).compileNode o
-      else
-        switch @operator
-          when '+'
-            return @compileSchemeWrapperArithmetic o, 'add', 'add', '+',
-                     (schemeAdd, schemeNumber) ->
-                        """
-                        function (a, b) {
-                          if (typeof a === 'string') {
-                            return a + (typeof b === 'string' ? b : #{schemeNumber}(b).toString());
-                          } else if (typeof b === 'string') {
-                            return #{schemeNumber}(a).toString() + b;
-                          }
-                          return #{schemeAdd}(a, b);
+      return @compileUnary   o
+    return @compileChain     o if isChain
+    if o.numeric
+      switch @operator
+        when '+'
+          schemeNumber = utility('SchemeNumber')
+          return @compileSchemeWrapperArithmetic o, 'add', 'add', '+',
+                   (schemeAdd) ->
+                      """
+                      function (a, b) {
+                        if (typeof a === 'string') {
+                          return a + (typeof b === 'string' ? b : #{schemeNumber}(b).toString());
+                        } else if (typeof b === 'string') {
+                          return #{schemeNumber}(a).toString() + b;
                         }
-                        """
-          when '==='
+                        return #{schemeAdd}(a, b);
+                      }
+                      """
+        when '==='
+          # If either arg is a string, we can just use the Javascript comparison.
+          if not(@first.isString() or @second.isString())
             isNumber = schemeNumberFunction 'isn', 'number?'
             return @compileSchemeWrapperArithmetic o, 'eql', 'eql', '=',
-                     (schemeEql, schemeNumber) ->
+                     (schemeEql) ->
                         """
                         function (a, b) {
                           if ((#{isNumber}(a) or typeof a === 'number') and
                               (#{isNumber}(b) or typeof b === 'number')) {
                             return #{schemeEql}(a, b);
-                         }
-                         return a === b;
+                          }
+                          return a === b;
                         }
                         """
-          when '!=='
+        when '!=='
+          # If either arg is a string, we can just use the Javascript comparison.
+          if not(@first.isString() or @second.isString())
             isNumber = schemeNumberFunction 'isn', 'number?'
             return @compileSchemeWrapperArithmetic o, 'neq', 'eql', '=',
-                     (schemeEql, schemeNumber) ->
+                     (schemeEql) ->
                         """
                         function (a, b) {
                           if ((#{isNumber}(a) or typeof a === 'number') and
                               (#{isNumber}(b) or typeof b === 'number')) {
                             return !#{schemeEql}(a, b);
-                         }
-                         return a !== b;
+                          }
+                          return a !== b;
                         }
                         """
-        schemeOp = {
-          '/':  ['div'],
-          # TODO: Handle strings as input?
-          '*':  ['mul'],
-          '-':  ['sub'],
-          '**': ['expt', 'expt'],
-          '//': ['floordiv', 'div'],
-          # TODO: This isn't quite right.
-          '%':  ['modTruncate', 'mod0'],
-          '%%': ['mod', 'mod'],
-          # TODO: Figure out how to handle equality comparisons
-          # TODO: Handle strings
-          '<':  ['lt'],
-          '<=': ['le'],
-          '>':  ['gt'],
-          '>=': ['ge']
-          }[@operator]
-        if schemeOp
-          return @compileSchemeArithmetic o, schemeOp[0], schemeOp[1] or @operator
-    return @compileYield     o if @isYield()
-    return @compileUnary     o if @isUnary()
-    return @compileChain     o if isChain
+      relationName = {
+        '<':  'lt',
+        '<=': 'le',
+        '>':  'gt',
+        '>=': 'ge'
+        }[@operator]
+      if relationName
+        if @first.isNumber() or @second.isNumber()
+          # If either arg is a number, we can call the Scheme function directly.
+          return @compileSchemeArithmetic o, relationName, @operator
+        relation = @operator
+        return @compileSchemeWrapperArithmetic o, relationName, relationName, relation,
+                   (schemeRelation) ->
+                      """
+                      function (a, b) {
+                        if (typeof a === 'string' and typeof b === 'string') {
+                          return a #{relation} b;
+                        }
+                        return #{schemeRelation}(a, b);
+                      }
+                      """
+      schemeOp = {
+        '/':  ['div'],
+        '*':  ['mul'],
+        '-':  ['sub'],
+        '**': ['expt', 'expt'],
+        '//': ['floordiv', 'div'],
+        # TODO: This isn't quite right.
+        '%':  ['modTruncate', 'mod0'],
+        '%%': ['mod', 'mod']
+        }[@operator]
+      if schemeOp
+        return @compileSchemeArithmetic o, schemeOp[0], schemeOp[1] or @operator
     switch @operator
       when '?'  then @compileExistence o
       when '**' then @compilePower o
@@ -2397,11 +2416,10 @@ exports.Op = class Op extends Base
   #     bin/coffee -e 'console.log 50 < 65 > 10'
   #     true
   compileChain: (o) ->
-    [@first.second, shared] = @first.second.cache o
-    fst = @first.compileToFragments o, LEVEL_OP
-    fragments = fst.concat @makeCode(" #{if @invert then '&&' else '||'} "),
-      (shared.compileToFragments o), @makeCode(" #{@operator} "), (@second.compileToFragments o, LEVEL_OP)
-    @wrapInBraces fragments
+    chainFirst = @first
+    [chainFirst.second, shared] = chainFirst.second.cache o
+    @first = new Value shared
+    (new Op((if @invert then '&&' else '||'), chainFirst, this)).compileNode o
 
   # Keep reference to the left expression, unless this an existential assignment
   compileExistence: (o) ->
@@ -3680,7 +3698,7 @@ utility = (name) ->
 schemeNumberFunctionWrapper = (wrapperName, name, schemeFn, makejs) ->
   ref = "__f_#{wrapperName}"
   sref = schemeNumberFunction(name, schemeFn)
-  Scope.root.assign ref, makejs(sref, utility('SchemeNumber'))
+  Scope.root.assign ref, makejs(sref)
   ref
 
 schemeNumberFunction = (name, schemeFn) ->
