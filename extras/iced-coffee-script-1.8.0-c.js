@@ -5084,7 +5084,7 @@
           '>=': 'ge'
         }[this.operator];
         if (relationName) {
-          return this.compileRelationNumeric(o);
+          return this.compileRelationNumeric(relationName, o);
         }
         schemeOp = {
           '/': ['div'],
@@ -5269,7 +5269,7 @@
       }
     };
 
-    Op.prototype.compileRelatioNumeric = function(o) {
+    Op.prototype.compileRelationNumeric = function(relationName, o) {
       var relation;
       if (this.first.isNumber() || this.second.isNumber()) {
         return this.compileNumericArithmetic(o, relationName, this.operator);

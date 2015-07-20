@@ -2340,7 +2340,7 @@ exports.Op = class Op extends Base
         '>':  'gt',
         '>=': 'ge'
         }[@operator]
-      return @compileRelationNumeric o if relationName
+      return @compileRelationNumeric relationName, o if relationName
       schemeOp = {
         '/':  ['div'],
         '*':  ['mul'],
@@ -2580,7 +2580,7 @@ exports.Op = class Op extends Base
            }
            """
 
-  compileRelatioNumeric: (o) ->
+  compileRelationNumeric: (relationName, o) ->
     if @first.isNumber() or @second.isNumber()
       # If either arg is a number, we can call the Scheme function directly.
       return @compileNumericArithmetic o, relationName, @operator
