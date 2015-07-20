@@ -332,17 +332,17 @@ exports.Base = class Base
   # will override these with custom logic, if needed.
   children: []
 
-  isStatement      : NO
-  jumps            : NO
-  isComplex        : YES
-  isChainable      : NO
-  isAssignable     : NO
-  isLoop           : NO
-  isNumber         : NO
-  isString         : NO
-  isNumberOrString : NO
-  isPrimitive      : NO
-  isLiteralNSR     : NO
+  isStatement       : NO
+  jumps             : NO
+  isComplex         : YES
+  isChainable       : NO
+  isAssignable      : NO
+  isLoop            : NO
+  isNumber          : NO
+  isString          : NO
+  isNumberOrString  : NO
+  isPrimitive       : NO
+  isLiteralConstant : NO
 
   unwrap     : THIS
   unfoldSoak : NO
@@ -849,23 +849,23 @@ exports.Value = class Value extends Base
     not @properties.length and @base instanceof type
 
   # Some boolean checks for the benefit of other nodes.
-  isArray          : -> @bareLiteral(Arr)
-  isRange          : -> @bareLiteral(Range)
-  isComplex        : -> @hasProperties() or @base.isComplex()
-  isAssignable     : -> @hasProperties() or @base.isAssignable()
-  isNumber         : -> @bareLiteral(Literal) and @base.kind == 'Number'
-  isSimpleNumber   : -> @bareLiteral(Literal) and SIMPLENUM.test @base.value
-  isString         : -> @bareLiteral(Literal) and @base.kind == 'String'
-  isNumberOrString : -> @bareLiteral(Literal) and @base.kind in ['Number', 'String']
-  isRegex          : -> @bareLiteral(Literal) and @base.kind == 'RegExp'
-  isLiteralNSR     : -> @bareLiteral(Literal) and
-                        @base.kind in ['Number', 'String', 'RegExp']
-  isAtomic         : ->
+  isArray           : -> @bareLiteral(Arr)
+  isRange           : -> @bareLiteral(Range)
+  isComplex         : -> @hasProperties() or @base.isComplex()
+  isAssignable      : -> @hasProperties() or @base.isAssignable()
+  isNumber          : -> @bareLiteral(Literal) and @base.kind == 'Number'
+  isSimpleNumber    : -> @bareLiteral(Literal) and SIMPLENUM.test @base.value
+  isString          : -> @bareLiteral(Literal) and @base.kind == 'String'
+  isNumberOrString  : -> @bareLiteral(Literal) and @base.kind in ['Number', 'String']
+  isRegex           : -> @bareLiteral(Literal) and @base.kind == 'RegExp'
+  isLiteralConstant : -> @bareLiteral(Literal) and
+                         @base.kind in ['Number', 'String', 'RegExp']
+  isAtomic          : ->
     for node in @properties.concat @base
       return no if node.soak or node instanceof Call
     yes
 
-  isNotCallable  : -> @isLiteralNSR() or
+  isNotCallable  : -> @isLiteralConstant() or
                       @isArray() or @isRange() or @isSplice() or @isObject()
 
   isStatement : (o)    -> not @properties.length and @base.isStatement o
@@ -2321,6 +2321,7 @@ exports.Op = class Op extends Base
       return @compileUnary   o
     return @compileChain     o if isChain
     if o.numeric
+      # Handle operators that have complex behavior with strings.
       switch @operator
         when '+'
           schemeNumber = utility('SchemeNumber')
