@@ -2319,6 +2319,8 @@ exports.Op = class Op extends Base
           when '-'
             sfn = new Value new Literal schemeNumberFunction 'neg', '-'
             return new Call(sfn, [@first]).compileNode o
+          when '--', '++'
+            return @compileIncDecNumeric o
       return @compileUnary   o
     return @compileChain     o if isChain
     if o.numeric
@@ -2618,6 +2620,22 @@ exports.Op = class Op extends Base
              return #{schemeRelation}(a, b);
            }
            """
+
+  # Convert -- and ++ by converting to the extended form `a = a + 1` and then compile that.
+  # TODO: Javascript ++ forces using numeric add, so use a
+  #   form of add that doesn't check for strings.
+  compileIncDecNumeric: (o) ->
+    [left, right] = @first.cacheReference o
+    # TODO: Move this out somewhere.
+    one = new Value new Literal '1', 'Number'
+    # TODO: If the result isn't used, we don't need to do the extra work of saving the vaue.
+    if @flip
+      ref = new Literal o.scope.freeVariable 'ref'
+      (new Block [
+         new Assign(left, new Op(@operator[...-1], new Assign(ref, right), one)),
+         ref]).compileToFragments o
+    else
+      new Assign(left, new Op(@operator[...-1], right, one)).compileToFragments o
 
   toString: (idt) ->
     super idt, @constructor.name + ' ' + @operator + (if @flip then ' (postfix)' else '')

@@ -5056,6 +5056,9 @@
             case '-':
               sfn = new Value(new Literal(schemeNumberFunction('neg', '-')));
               return new Call(sfn, [this.first]).compileNode(o);
+            case '--':
+            case '++':
+              return this.compileIncDecNumeric(o);
           }
         }
         return this.compileUnary(o);
@@ -5287,6 +5290,18 @@
         return this.compileNumericWrapperArithmetic(o, relationName, relationName, relation, function(schemeRelation) {
           return "function (a, b) {\n  if (typeof a === 'string' and typeof b === 'string') {\n    return a " + relation + " b;\n  }\n  return " + schemeRelation + "(a, b);\n}";
         });
+      }
+    };
+
+    Op.prototype.compileIncDecNumeric = function(o) {
+      var left, one, ref, right, _ref2;
+      _ref2 = this.first.cacheReference(o), left = _ref2[0], right = _ref2[1];
+      one = new Value(new Literal('1', 'Number'));
+      if (this.flip) {
+        ref = new Literal(o.scope.freeVariable('ref'));
+        return (new Block([new Assign(left, new Op(this.operator.slice(0, -1), new Assign(ref, right), one)), ref])).compileToFragments(o);
+      } else {
+        return new Assign(left, new Op(this.operator.slice(0, -1), right, one)).compileToFragments(o);
       }
     };
 
