@@ -2226,7 +2226,6 @@
         extras = " (" + extras.join('') + ")";
       }
       tree = '\n' + idt + name;
-      tree = '\n' + idt + name;
       if (this.soak) {
         tree += '?';
       }
@@ -4051,7 +4050,7 @@
         if ((_ref2 = this.context) === '||=' || _ref2 === '&&=' || _ref2 === '?=') {
           return this.compileConditional(o);
         }
-        if ((_ref3 = this.context) === '**=' || _ref3 === '//=' || _ref3 === '%%=') {
+        if (this.context && (((_ref3 = this.context) === '**=' || _ref3 === '//=' || _ref3 === '%%=') || o.numeric && this.context.match(/^[-+*/%]=$/))) {
           return this.compileSpecialMath(o);
         }
       }
@@ -5021,20 +5020,20 @@
       return call;
     };
 
-    Op.prototype.compileSchemeWrapperArithmetic = function(o, wrapperName, name, schemeFn, makejs) {
+    Op.prototype.compileNumericWrapperArithmetic = function(o, wrapperName, name, schemeFn, makejs) {
       var wfn;
       wfn = new Value(new Literal(schemeNumberFunctionWrapper(wrapperName, name, schemeFn, makejs)));
       return new Call(wfn, [this.first, this.second]).compileNode(o);
     };
 
-    Op.prototype.compileSchemeArithmetic = function(o, name, schemeFn) {
+    Op.prototype.compileNumericArithmetic = function(o, name, schemeFn) {
       var sfn;
       sfn = new Value(new Literal(schemeNumberFunction(name, schemeFn)));
       return new Call(sfn, [this.first, this.second]).compileNode(o);
     };
 
     Op.prototype.compileNode = function(o) {
-      var answer, isChain, isNumber, lhs, relation, relationName, rhs, schemeNumber, schemeOp, sfn, _ref2, _ref3;
+      var answer, isChain, lhs, relationName, rhs, schemeOp, sfn, _ref2, _ref3;
       isChain = this.isChainable() && this.first.isChainable();
       if (!isChain) {
         this.first.front = this.front;
@@ -5067,24 +5066,15 @@
       if (o.numeric) {
         switch (this.operator) {
           case '+':
-            schemeNumber = utility('SchemeNumber');
-            return this.compileSchemeWrapperArithmetic(o, 'add', 'add', '+', function(schemeAdd) {
-              return "function (a, b) {\n  if (typeof a === 'string') {\n    return a + (typeof b === 'string' ? b : " + schemeNumber + "(b).toString());\n  } else if (typeof b === 'string') {\n    return " + schemeNumber + "(a).toString() + b;\n  }\n  return " + schemeAdd + "(a, b);\n}";
-            });
+            return this.compileAddNumeric(o);
           case '===':
             if (!(this.first.isString() || this.second.isString())) {
-              isNumber = schemeNumberFunction('isn', 'number?');
-              return this.compileSchemeWrapperArithmetic(o, 'eql', 'eql', '=', function(schemeEql) {
-                return "function (a, b) {\n  if ((" + isNumber + "(a) or typeof a === 'number') and\n      (" + isNumber + "(b) or typeof b === 'number')) {\n    return " + schemeEql + "(a, b);\n  }\n  return a === b;\n}";
-              });
+              return this.compileEqlNumeric(o);
             }
             break;
           case '!==':
             if (!(this.first.isString() || this.second.isString())) {
-              isNumber = schemeNumberFunction('isn', 'number?');
-              return this.compileSchemeWrapperArithmetic(o, 'neq', 'eql', '=', function(schemeEql) {
-                return "function (a, b) {\n  if ((" + isNumber + "(a) or typeof a === 'number') and\n      (" + isNumber + "(b) or typeof b === 'number')) {\n    return !" + schemeEql + "(a, b);\n  }\n  return a !== b;\n}";
-              });
+              return this.compileNeqNumeric(o);
             }
         }
         relationName = {
@@ -5094,13 +5084,7 @@
           '>=': 'ge'
         }[this.operator];
         if (relationName) {
-          if (this.first.isNumber() || this.second.isNumber()) {
-            return this.compileSchemeArithmetic(o, relationName, this.operator);
-          }
-          relation = this.operator;
-          return this.compileSchemeWrapperArithmetic(o, relationName, relationName, relation, function(schemeRelation) {
-            return "function (a, b) {\n  if (typeof a === 'string' and typeof b === 'string') {\n    return a " + relation + " b;\n  }\n  return " + schemeRelation + "(a, b);\n}";
-          });
+          return this.compileRelationNumeric(o);
         }
         schemeOp = {
           '/': ['div'],
@@ -5112,7 +5096,7 @@
           '%%': ['mod', 'mod']
         }[this.operator];
         if (schemeOp) {
-          return this.compileSchemeArithmetic(o, schemeOp[0], schemeOp[1] || this.operator);
+          return this.compileNumericArithmetic(o, schemeOp[0], schemeOp[1] || this.operator);
         }
       }
       switch (this.operator) {
@@ -5222,8 +5206,92 @@
       return new Call(mod, [this.first, this.second]).compileToFragments(o);
     };
 
+    Op.prototype.compileAddNumeric = function(o) {
+      var isNumber, schemeNumber;
+      schemeNumber = utility('SchemeNumber');
+      isNumber = schemeNumberFunction('isn', 'number?');
+      if (this.first.isNumber()) {
+        return this.compileNumericWrapperArithmetic(o, 'addnx', 'add', '+', function(schemeAdd) {
+          return "function (a, b) {\n  if (typeof b === 'string') {\n    return a.toString() + b;\n  }\n  return " + schemeAdd + "(a, b);\n}";
+        });
+      } else if (this.second.isNumber()) {
+        return this.compileNumericWrapperArithmetic(o, 'addxn', 'add', '+', function(schemeAdd) {
+          return "function (a, b) {\n  if (typeof a === 'string') {\n    return a + b.toString();\n  }\n  return " + schemeAdd + "(a, b);\n}";
+        });
+      } else if (this.first.isString()) {
+        return this.compileNumericWrapperArithmetic(o, 'addsx', 'add', '+', function(schemeAdd) {
+          return "function (a, b) {\n  if (" + isNumber + "(b)) {\n    return a + b.toString();\n  } else if (typeof b === 'number') {\n    return a + " + schemeNumber + "(b).toString();\n  }\n  return a + b;\n}";
+        });
+      } else if (this.second.isString()) {
+        return this.compileNumericWrapperArithmetic(o, 'addxs', 'add', '+', function(schemeAdd) {
+          return "function (a, b) {\n  if (" + isNumber + "(a)) {\n    return a.toString() + b;\n  } else if (typeof a === 'number') {\n    return " + schemeNumber + "(a).toString() + b;\n  return a + b;\n}";
+        });
+      } else {
+        return this.compileNumericWrapperArithmetic(o, 'add', 'add', '+', function(schemeAdd) {
+          return "function (a, b) {\n  if (typeof a === 'string') {\n    if (" + isNumber + "(b)) {\n      return a + b.toString();\n    } else if (typeof b === 'number') {\n      return a + " + schemeNumber + "(b).toString();\n    }\n    return a + b;\n  } else if (typeof b === 'string') {\n    if (" + isNumber + "(a)) {\n      return a.toString() + b;\n    } else if (typeof a === 'number') {\n      return " + schemeNumber + "(a).toString() + b;\n    return a + b;\n  }\n  return " + schemeAdd + "(a, b);\n}";
+        });
+      }
+    };
+
+    Op.prototype.compileEqlNumeric = function(o) {
+      var isNumber;
+      isNumber = schemeNumberFunction('isn', 'number?');
+      if (this.first.isNumber()) {
+        return this.compileNumericWrapperArithmetic(o, 'eqlnx', 'eql', '=', function(schemeEql) {
+          return "function (a, b) {\n  if (" + isNumber + "(b) or typeof b === 'number') {\n    return " + schemeEql + "(a, b);\n  }\n  return a === b;\n}";
+        });
+      } else if (this.second.isNumber()) {
+        return this.compileNumericWrapperArithmetic(o, 'eqlxn', 'eql', '=', function(schemeEql) {
+          return "function (a, b) {\n  if (" + isNumber + "(a) or typeof a === 'number') {\n    return " + schemeEql + "(a, b);\n  }\n  return a === b;\n}";
+        });
+      } else {
+        return this.compileNumericWrapperArithmetic(o, 'eql', 'eql', '=', function(schemeEql) {
+          return "function (a, b) {\n  if ((" + isNumber + "(a) or typeof a === 'number') and\n      (" + isNumber + "(b) or typeof b === 'number')) {\n    return " + schemeEql + "(a, b);\n  }\n  return a === b;\n}";
+        });
+      }
+    };
+
+    Op.prototype.compileNeqNumeric = function(o) {
+      var isNumber;
+      isNumber = schemeNumberFunction('isn', 'number?');
+      if (this.first.isNumber()) {
+        return this.compileNumericWrapperArithmetic(o, 'neqnx', 'eql', '=', function(schemeEql) {
+          return "function (a, b) {\n  if (" + isNumber + "(b) or typeof b === 'number') {\n    return !" + schemeEql + "(a, b);\n  }\n  return a !== b;\n}";
+        });
+      } else if (this.second.isNumber()) {
+        return this.compileNumericWrapperArithmetic(o, 'neqxn', 'eql', '=', function(schemeEql) {
+          return "function (a, b) {\n  if (" + isNumber + "(a) or typeof a === 'number') {\n    return !" + schemeEql + "(a, b);\n  }\n  return a !== b;\n}";
+        });
+      } else {
+        return this.compileNumericWrapperArithmetic(o, 'neq', 'eql', '=', function(schemeEql) {
+          return "function (a, b) {\n  if ((" + isNumber + "(a) or typeof a === 'number') and\n      (" + isNumber + "(b) or typeof b === 'number')) {\n    return !" + schemeEql + "(a, b);\n  }\n  return a !== b;\n}";
+        });
+      }
+    };
+
+    Op.prototype.compileRelatioNumeric = function(o) {
+      var relation;
+      if (this.first.isNumber() || this.second.isNumber()) {
+        return this.compileNumericArithmetic(o, relationName, this.operator);
+      }
+      relation = this.operator;
+      if (this.first.isString()) {
+        return this.compileNumericWrapperArithmetic(o, "" + relationName + "sx", relationName, relation, function(schemeRelation) {
+          return "function (a, b) {\n  if (typeof b === 'string') {\n    return a " + relation + " b;\n  }\n  return " + schemeRelation + "(a, b);\n}";
+        });
+      } else if (this.second.isString) {
+        return this.compileNumericWrapperArithmetic(o, "" + relationName + "xs", relationName, relation, function(schemeRelation) {
+          return "function (a, b) {\n  if (typeof a === 'string') {\n    return a " + relation + " b;\n  }\n  return " + schemeRelation + "(a, b);\n}";
+        });
+      } else {
+        return this.compileNumericWrapperArithmetic(o, relationName, relationName, relation, function(schemeRelation) {
+          return "function (a, b) {\n  if (typeof a === 'string' and typeof b === 'string') {\n    return a " + relation + " b;\n  }\n  return " + schemeRelation + "(a, b);\n}";
+        });
+      }
+    };
+
     Op.prototype.toString = function(idt) {
-      return Op.__super__.toString.call(this, idt, this.constructor.name + ' ' + this.operator);
+      return Op.__super__.toString.call(this, idt, this.constructor.name + ' ' + this.operator + (this.flip ? ' (postfix)' : ''));
     };
 
     Op.prototype.icedWrapContinuation = function() {

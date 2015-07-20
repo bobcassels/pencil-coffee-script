@@ -184,7 +184,6 @@ exports.Base = class Base
     if extras.length
       extras = " (" + extras.join('') + ")"
     tree = '\n' + idt + name
-    tree = '\n' + idt + name
     tree += '?' if @soak
     tree += extras
     @eachChild (node) -> tree += node.toString idt + TAB
@@ -1569,7 +1568,9 @@ exports.Assign = class Assign extends Base
       return @compilePatternMatch o if @variable.isArray() or @variable.isObject()
       return @compileSplice       o if @variable.isSplice()
       return @compileConditional  o if @context in ['||=', '&&=', '?=']
-      return @compileSpecialMath  o if @context in ['**=', '//=', '%%=']
+      return @compileSpecialMath  o if @context and
+                                       (@context in ['**=', '//=', '%%='] or
+                                        o.numeric and @context.match /^[-+*/%]=$/)
     compiledName = @variable.compileToFragments o, LEVEL_LIST
     name = fragmentsToText compiledName
     unless @context
@@ -2291,11 +2292,11 @@ exports.Op = class Op extends Base
     call.do = yes
     call
 
-  compileSchemeWrapperArithmetic: (o, wrapperName, name, schemeFn, makejs) ->
+  compileNumericWrapperArithmetic: (o, wrapperName, name, schemeFn, makejs) ->
     wfn = new Value new Literal schemeNumberFunctionWrapper wrapperName, name, schemeFn, makejs
     new Call(wfn, [@first, @second]).compileNode o
 
-  compileSchemeArithmetic: (o, name, schemeFn) ->
+  compileNumericArithmetic: (o, name, schemeFn) ->
     sfn = new Value new Literal schemeNumberFunction name, schemeFn
     new Call(sfn, [@first, @second]).compileNode o
 
@@ -2324,70 +2325,22 @@ exports.Op = class Op extends Base
       # Handle operators that have complex behavior with strings.
       switch @operator
         when '+'
-          schemeNumber = utility('SchemeNumber')
-          return @compileSchemeWrapperArithmetic o, 'add', 'add', '+',
-                   (schemeAdd) ->
-                      """
-                      function (a, b) {
-                        if (typeof a === 'string') {
-                          return a + (typeof b === 'string' ? b : #{schemeNumber}(b).toString());
-                        } else if (typeof b === 'string') {
-                          return #{schemeNumber}(a).toString() + b;
-                        }
-                        return #{schemeAdd}(a, b);
-                      }
-                      """
+          return @compileAddNumeric o
         when '==='
           # If either arg is a string, we can just use the Javascript comparison.
-          if not(@first.isString() or @second.isString())
-            isNumber = schemeNumberFunction 'isn', 'number?'
-            return @compileSchemeWrapperArithmetic o, 'eql', 'eql', '=',
-                     (schemeEql) ->
-                        """
-                        function (a, b) {
-                          if ((#{isNumber}(a) or typeof a === 'number') and
-                              (#{isNumber}(b) or typeof b === 'number')) {
-                            return #{schemeEql}(a, b);
-                          }
-                          return a === b;
-                        }
-                        """
+          unless @first.isString() or @second.isString()
+            return @compileEqlNumeric o
         when '!=='
           # If either arg is a string, we can just use the Javascript comparison.
-          if not(@first.isString() or @second.isString())
-            isNumber = schemeNumberFunction 'isn', 'number?'
-            return @compileSchemeWrapperArithmetic o, 'neq', 'eql', '=',
-                     (schemeEql) ->
-                        """
-                        function (a, b) {
-                          if ((#{isNumber}(a) or typeof a === 'number') and
-                              (#{isNumber}(b) or typeof b === 'number')) {
-                            return !#{schemeEql}(a, b);
-                          }
-                          return a !== b;
-                        }
-                        """
+          unless @first.isString() or @second.isString()
+            return @compileNeqNumeric o
       relationName = {
         '<':  'lt',
         '<=': 'le',
         '>':  'gt',
         '>=': 'ge'
         }[@operator]
-      if relationName
-        if @first.isNumber() or @second.isNumber()
-          # If either arg is a number, we can call the Scheme function directly.
-          return @compileSchemeArithmetic o, relationName, @operator
-        relation = @operator
-        return @compileSchemeWrapperArithmetic o, relationName, relationName, relation,
-                   (schemeRelation) ->
-                      """
-                      function (a, b) {
-                        if (typeof a === 'string' and typeof b === 'string') {
-                          return a #{relation} b;
-                        }
-                        return #{schemeRelation}(a, b);
-                      }
-                      """
+      return @compileRelationNumeric o if relationName
       schemeOp = {
         '/':  ['div'],
         '*':  ['mul'],
@@ -2399,7 +2352,7 @@ exports.Op = class Op extends Base
         '%%': ['mod', 'mod']
         }[@operator]
       if schemeOp
-        return @compileSchemeArithmetic o, schemeOp[0], schemeOp[1] or @operator
+        return @compileNumericArithmetic o, schemeOp[0], schemeOp[1] or @operator
     switch @operator
       when '?'  then @compileExistence o
       when '**' then @compilePower o
@@ -2478,8 +2431,196 @@ exports.Op = class Op extends Base
     mod = new Value new Literal utility 'modulo'
     new Call(mod, [@first, @second]).compileToFragments o
 
+  compileAddNumeric: (o) ->
+    # Javascript + on a non-string will call valueOf().
+    # We want toString() values for numbers, so call that explicitly.
+    schemeNumber = utility('SchemeNumber')
+    isNumber = schemeNumberFunction 'isn', 'number?'
+    if @first.isNumber()
+      @compileNumericWrapperArithmetic o, 'addnx', 'add', '+',
+        (schemeAdd) ->
+           """
+           function (a, b) {
+             if (typeof b === 'string') {
+               return a.toString() + b;
+             }
+             return #{schemeAdd}(a, b);
+           }
+           """
+    else if @second.isNumber()
+      @compileNumericWrapperArithmetic o, 'addxn', 'add', '+',
+        (schemeAdd) ->
+           """
+           function (a, b) {
+             if (typeof a === 'string') {
+               return a + b.toString();
+             }
+             return #{schemeAdd}(a, b);
+           }
+           """
+    else if @first.isString()
+      @compileNumericWrapperArithmetic o, 'addsx', 'add', '+',
+        (schemeAdd) ->
+           """
+           function (a, b) {
+             if (#{isNumber}(b)) {
+               return a + b.toString();
+             } else if (typeof b === 'number') {
+               return a + #{schemeNumber}(b).toString();
+             }
+             return a + b;
+           }
+           """
+    else if @second.isString()
+      @compileNumericWrapperArithmetic o, 'addxs', 'add', '+',
+        (schemeAdd) ->
+           """
+           function (a, b) {
+             if (#{isNumber}(a)) {
+               return a.toString() + b;
+             } else if (typeof a === 'number') {
+               return #{schemeNumber}(a).toString() + b;
+             return a + b;
+           }
+           """
+    else
+      @compileNumericWrapperArithmetic o, 'add', 'add', '+',
+        (schemeAdd) ->
+           """
+           function (a, b) {
+             if (typeof a === 'string') {
+               if (#{isNumber}(b)) {
+                 return a + b.toString();
+               } else if (typeof b === 'number') {
+                 return a + #{schemeNumber}(b).toString();
+               }
+               return a + b;
+             } else if (typeof b === 'string') {
+               if (#{isNumber}(a)) {
+                 return a.toString() + b;
+               } else if (typeof a === 'number') {
+                 return #{schemeNumber}(a).toString() + b;
+               return a + b;
+             }
+             return #{schemeAdd}(a, b);
+           }
+           """
+
+  compileEqlNumeric: (o) ->
+    isNumber = schemeNumberFunction 'isn', 'number?'
+    if @first.isNumber()
+      @compileNumericWrapperArithmetic o, 'eqlnx', 'eql', '=',
+        (schemeEql) ->
+           """
+           function (a, b) {
+             if (#{isNumber}(b) or typeof b === 'number') {
+               return #{schemeEql}(a, b);
+             }
+             return a === b;
+           }
+           """
+    else if @second.isNumber()
+      @compileNumericWrapperArithmetic o, 'eqlxn', 'eql', '=',
+        (schemeEql) ->
+           """
+           function (a, b) {
+             if (#{isNumber}(a) or typeof a === 'number') {
+               return #{schemeEql}(a, b);
+             }
+             return a === b;
+           }
+           """
+    else
+      @compileNumericWrapperArithmetic o, 'eql', 'eql', '=',
+      (schemeEql) ->
+         """
+         function (a, b) {
+           if ((#{isNumber}(a) or typeof a === 'number') and
+               (#{isNumber}(b) or typeof b === 'number')) {
+             return #{schemeEql}(a, b);
+           }
+           return a === b;
+         }
+         """
+
+  compileNeqNumeric: (o) ->
+    isNumber = schemeNumberFunction 'isn', 'number?'
+    if @first.isNumber()
+      @compileNumericWrapperArithmetic o, 'neqnx', 'eql', '=',
+        (schemeEql) ->
+           """
+           function (a, b) {
+             if (#{isNumber}(b) or typeof b === 'number') {
+               return !#{schemeEql}(a, b);
+             }
+             return a !== b;
+           }
+           """
+    else if @second.isNumber()
+      @compileNumericWrapperArithmetic o, 'neqxn', 'eql', '=',
+        (schemeEql) ->
+           """
+           function (a, b) {
+             if (#{isNumber}(a) or typeof a === 'number') {
+               return !#{schemeEql}(a, b);
+             }
+             return a !== b;
+           }
+           """
+    else
+      @compileNumericWrapperArithmetic o, 'neq', 'eql', '=',
+        (schemeEql) ->
+           """
+           function (a, b) {
+             if ((#{isNumber}(a) or typeof a === 'number') and
+                 (#{isNumber}(b) or typeof b === 'number')) {
+               return !#{schemeEql}(a, b);
+             }
+             return a !== b;
+           }
+           """
+
+  compileRelatioNumeric: (o) ->
+    if @first.isNumber() or @second.isNumber()
+      # If either arg is a number, we can call the Scheme function directly.
+      return @compileNumericArithmetic o, relationName, @operator
+    relation = @operator
+    if @first.isString()
+      @compileNumericWrapperArithmetic o, "#{relationName}sx", relationName, relation,
+        (schemeRelation) ->
+           """
+           function (a, b) {
+             if (typeof b === 'string') {
+               return a #{relation} b;
+             }
+             return #{schemeRelation}(a, b);
+           }
+           """
+    else if @second.isString
+      @compileNumericWrapperArithmetic o, "#{relationName}xs", relationName, relation,
+        (schemeRelation) ->
+           """
+           function (a, b) {
+             if (typeof a === 'string') {
+               return a #{relation} b;
+             }
+             return #{schemeRelation}(a, b);
+           }
+           """
+    else
+      @compileNumericWrapperArithmetic o, relationName, relationName, relation,
+        (schemeRelation) ->
+           """
+           function (a, b) {
+             if (typeof a === 'string' and typeof b === 'string') {
+               return a #{relation} b;
+             }
+             return #{schemeRelation}(a, b);
+           }
+           """
+
   toString: (idt) ->
-    super idt, @constructor.name + ' ' + @operator
+    super idt, @constructor.name + ' ' + @operator + (if @flip then ' (postfix)' else '')
 
   icedWrapContinuation : -> @icedCallContinuationFlag
 
