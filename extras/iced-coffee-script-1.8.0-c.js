@@ -764,7 +764,7 @@
   };
 
   rationalReduce = function(num, den) {
-    if ((num != null) && (den != null) && num < Math.pow(2, 53) && (0 < den && den < Math.pow(2, 53))) {
+    if ((num != null) && (den != null) && num < Math.pow(2, 53) && 0 < den && den < Math.pow(2, 53)) {
       return canonicalizeRational(num, den);
     }
   };
@@ -1594,7 +1594,7 @@
       } else {
         while (match = HEREDOC_INDENT.exec(doc)) {
           attempt = match[1];
-          if (indent === null || (0 < (_ref2 = attempt.length) && _ref2 < indent.length)) {
+          if (indent === null || 0 < (_ref2 = attempt.length) && _ref2 < indent.length) {
             indent = attempt;
           }
         }
@@ -1725,7 +1725,7 @@
         i += expr.length;
         pi = i + 1;
       }
-      if ((i > pi && pi < str.length)) {
+      if (i > pi && pi < str.length) {
         tokens.push(this.makeToken('NEOSTRING', str.slice(pi), strOffset + pi));
       }
       if (regex) {
@@ -2436,7 +2436,7 @@
 
     Base.prototype.isPrimitive = NO;
 
-    Base.prototype.isLiteralObject = NO;
+    Base.prototype.isLiteralConstant = NO;
 
     Base.prototype.unwrap = THIS;
 
@@ -3109,7 +3109,7 @@
       return this.bareLiteral(Literal) && this.base.kind === 'RegExp';
     };
 
-    Value.prototype.isLiteralObject = function() {
+    Value.prototype.isLiteralConstant = function() {
       var _ref2;
       return this.bareLiteral(Literal) && ((_ref2 = this.base.kind) === 'Number' || _ref2 === 'String' || _ref2 === 'RegExp');
     };
@@ -3127,7 +3127,7 @@
     };
 
     Value.prototype.isNotCallable = function() {
-      return this.isNumber() || this.isString() || this.isRegex() || this.isArray() || this.isRange() || this.isSplice() || this.isObject();
+      return this.isLiteralConstant() || this.isArray() || this.isRange() || this.isSplice() || this.isObject();
     };
 
     Value.prototype.isStatement = function(o) {
@@ -5034,7 +5034,7 @@
     };
 
     Op.prototype.compileNode = function(o) {
-      var answer, isChain, isNumber, lhs, rhs, schemeOp, sfn, _ref2, _ref3;
+      var answer, isChain, isNumber, lhs, relation, relationName, rhs, schemeNumber, schemeOp, sfn, _ref2, _ref3;
       isChain = this.isChainable() && this.first.isChainable();
       if (!isChain) {
         this.first.front = this.front;
@@ -5045,8 +5045,11 @@
       if (((_ref2 = this.operator) === '--' || _ref2 === '++') && (_ref3 = this.first.unwrapAll().value, __indexOf.call(STRICT_PROSCRIBED, _ref3) >= 0)) {
         this.error("cannot increment/decrement \"" + (this.first.unwrapAll().value) + "\"");
       }
-      if (o.numeric) {
-        if (this.isUnary()) {
+      if (this.isYield()) {
+        return this.compileYield(o);
+      }
+      if (this.isUnary()) {
+        if (o.numeric) {
           switch (this.operator) {
             case '+':
               sfn = new Value(new Literal(utility('SchemeNumber')));
@@ -5055,49 +5058,62 @@
               sfn = new Value(new Literal(schemeNumberFunction('neg', '-')));
               return new Call(sfn, [this.first]).compileNode(o);
           }
-        } else {
-          switch (this.operator) {
-            case '+':
-              return this.compileSchemeWrapperArithmetic(o, 'add', 'add', '+', function(schemeAdd, schemeNumber) {
-                return "function (a, b) {\n  if (typeof a === 'string') {\n    return a + (typeof b === 'string' ? b : " + schemeNumber + "(b).toString());\n  } else if (typeof b === 'string') {\n    return " + schemeNumber + "(a).toString() + b;\n  }\n  return " + schemeAdd + "(a, b);\n}";
-              });
-            case '===':
-              isNumber = schemeNumberFunction('isn', 'number?');
-              return this.compileSchemeWrapperArithmetic(o, 'eql', 'eql', '=', function(schemeEql, schemeNumber) {
-                return "function (a, b) {\n  if ((" + isNumber + "(a) or typeof a === 'number') and\n      (" + isNumber + "(b) or typeof b === 'number')) {\n    return " + schemeEql + "(a, b);\n }\n return a === b;\n}";
-              });
-            case '!==':
-              isNumber = schemeNumberFunction('isn', 'number?');
-              return this.compileSchemeWrapperArithmetic(o, 'neq', 'eql', '=', function(schemeEql, schemeNumber) {
-                return "function (a, b) {\n  if ((" + isNumber + "(a) or typeof a === 'number') and\n      (" + isNumber + "(b) or typeof b === 'number')) {\n    return !" + schemeEql + "(a, b);\n }\n return a !== b;\n}";
-              });
-          }
-          schemeOp = {
-            '/': ['div'],
-            '*': ['mul'],
-            '-': ['sub'],
-            '**': ['expt', 'expt'],
-            '//': ['floordiv', 'div'],
-            '%': ['modTruncate', 'mod0'],
-            '%%': ['mod', 'mod'],
-            '<': ['lt'],
-            '<=': ['le'],
-            '>': ['gt'],
-            '>=': ['ge']
-          }[this.operator];
-          if (schemeOp) {
-            return this.compileSchemeArithmetic(o, schemeOp[0], schemeOp[1] || this.operator);
-          }
         }
-      }
-      if (this.isYield()) {
-        return this.compileYield(o);
-      }
-      if (this.isUnary()) {
         return this.compileUnary(o);
       }
       if (isChain) {
         return this.compileChain(o);
+      }
+      if (o.numeric) {
+        switch (this.operator) {
+          case '+':
+            schemeNumber = utility('SchemeNumber');
+            return this.compileSchemeWrapperArithmetic(o, 'add', 'add', '+', function(schemeAdd) {
+              return "function (a, b) {\n  if (typeof a === 'string') {\n    return a + (typeof b === 'string' ? b : " + schemeNumber + "(b).toString());\n  } else if (typeof b === 'string') {\n    return " + schemeNumber + "(a).toString() + b;\n  }\n  return " + schemeAdd + "(a, b);\n}";
+            });
+          case '===':
+            if (!(this.first.isString() || this.second.isString())) {
+              isNumber = schemeNumberFunction('isn', 'number?');
+              return this.compileSchemeWrapperArithmetic(o, 'eql', 'eql', '=', function(schemeEql) {
+                return "function (a, b) {\n  if ((" + isNumber + "(a) or typeof a === 'number') and\n      (" + isNumber + "(b) or typeof b === 'number')) {\n    return " + schemeEql + "(a, b);\n  }\n  return a === b;\n}";
+              });
+            }
+            break;
+          case '!==':
+            if (!(this.first.isString() || this.second.isString())) {
+              isNumber = schemeNumberFunction('isn', 'number?');
+              return this.compileSchemeWrapperArithmetic(o, 'neq', 'eql', '=', function(schemeEql) {
+                return "function (a, b) {\n  if ((" + isNumber + "(a) or typeof a === 'number') and\n      (" + isNumber + "(b) or typeof b === 'number')) {\n    return !" + schemeEql + "(a, b);\n  }\n  return a !== b;\n}";
+              });
+            }
+        }
+        relationName = {
+          '<': 'lt',
+          '<=': 'le',
+          '>': 'gt',
+          '>=': 'ge'
+        }[this.operator];
+        if (relationName) {
+          if (this.first.isNumber() || this.second.isNumber()) {
+            return this.compileSchemeArithmetic(o, relationName, this.operator);
+          }
+          relation = this.operator;
+          return this.compileSchemeWrapperArithmetic(o, relationName, relationName, relation, function(schemeRelation) {
+            return "function (a, b) {\n  if (typeof a === 'string' and typeof b === 'string') {\n    return a " + relation + " b;\n  }\n  return " + schemeRelation + "(a, b);\n}";
+          });
+        }
+        schemeOp = {
+          '/': ['div'],
+          '*': ['mul'],
+          '-': ['sub'],
+          '**': ['expt', 'expt'],
+          '//': ['floordiv', 'div'],
+          '%': ['modTruncate', 'mod0'],
+          '%%': ['mod', 'mod']
+        }[this.operator];
+        if (schemeOp) {
+          return this.compileSchemeArithmetic(o, schemeOp[0], schemeOp[1] || this.operator);
+        }
       }
       switch (this.operator) {
         case '?':
@@ -5121,11 +5137,11 @@
     };
 
     Op.prototype.compileChain = function(o) {
-      var fragments, fst, shared, _ref2;
-      _ref2 = this.first.second.cache(o), this.first.second = _ref2[0], shared = _ref2[1];
-      fst = this.first.compileToFragments(o, LEVEL_OP);
-      fragments = fst.concat(this.makeCode(" " + (this.invert ? '&&' : '||') + " "), shared.compileToFragments(o), this.makeCode(" " + this.operator + " "), this.second.compileToFragments(o, LEVEL_OP));
-      return this.wrapInBraces(fragments);
+      var chainFirst, shared, _ref2;
+      chainFirst = this.first;
+      _ref2 = chainFirst.second.cache(o), chainFirst.second = _ref2[0], shared = _ref2[1];
+      this.first = new Value(shared);
+      return (new Op((this.invert ? '&&' : '||'), chainFirst, this)).compileNode(o);
     };
 
     Op.prototype.compileExistence = function(o) {
@@ -6560,7 +6576,7 @@
     var ref, sref;
     ref = "__f_" + wrapperName;
     sref = schemeNumberFunction(name, schemeFn);
-    Scope.root.assign(ref, makejs(sref, utility('SchemeNumber')));
+    Scope.root.assign(ref, makejs(sref));
     return ref;
   };
 
@@ -6976,7 +6992,7 @@ this.$ = yy.addLocationDataFn(_$[$0-1], _$[$0])(new yy.Throw($$[$0]));
 break;
 case 148:
 this.$ = yy.addLocationDataFn(_$[$0-2], _$[$0])((function () {
-        if ($$[$0-1] instanceof yy.Block && $$[$0-1].expressions.length === 1 && $$[$0-1].expressions[0].isLiteralObject()) {
+        if ($$[$0-1] instanceof yy.Block && $$[$0-1].expressions.length === 1 && $$[$0-1].expressions[0].isLiteralConstant()) {
           return $$[$0-1].expressions[0];
         } else {
           return new yy.Parens($$[$0-1]);
@@ -6985,7 +7001,7 @@ this.$ = yy.addLocationDataFn(_$[$0-2], _$[$0])((function () {
 break;
 case 149:
 this.$ = yy.addLocationDataFn(_$[$0-4], _$[$0])((function () {
-        if ($$[$0-2] instanceof yy.Block && $$[$0-2].expressions.length === 1 && $$[$0-2].expressions[0].isLiteralObject()) {
+        if ($$[$0-2] instanceof yy.Block && $$[$0-2].expressions.length === 1 && $$[$0-2].expressions[0].isLiteralConstant()) {
           return $$[$0-2].expressions[0];
         } else {
           return new yy.Parens($$[$0-2]);

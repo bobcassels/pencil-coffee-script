@@ -432,7 +432,7 @@ grammar =
       if $2 instanceof Block and
          $2.expressions.length == 1 and
          # TODO: Figure out other cases where we can lose the parens.
-         $2.expressions[0].isLiteralObject()
+         $2.expressions[0].isLiteralConstant()
         $2.expressions[0]
       else
         new Parens $2
@@ -441,7 +441,7 @@ grammar =
       if $3 instanceof Block and
          $3.expressions.length == 1 and
          # TODO: Figure out other cases where we can lose the parens.
-         $3.expressions[0].isLiteralObject()
+         $3.expressions[0].isLiteralConstant()
         $3.expressions[0]
       else
         new Parens $3
