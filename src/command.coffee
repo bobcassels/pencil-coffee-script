@@ -48,6 +48,7 @@ SWITCHES = [
   ['-r', '--require [MODULE*]', 'require the given module before eval or REPL']
   ['-s', '--stdio',           'listen for and compile scripts over stdio']
   ['-l', '--literate',        'treat stdio as literate style coffeescript']
+  [      '--numeric',         'use arbitrary precision integer, rational and complex arithmetic']
   ['-t', '--tokens',          'print out the tokens that the lexer/rewriter produce']
   ['-v', '--version',         'display the version number']
   ['-w', '--watch',           'watch scripts for changes and rerun commands']
@@ -413,6 +414,7 @@ compileOptions = (filename, base) ->
     literate: opts.literate or helpers.isLiterate(filename)
     bare: opts.bare
     header: opts.compile and not opts['no-header']
+    numeric: opts.numeric
     sourceMap: opts.map
     inlineMap: opts['inline-map']
   }

@@ -35,6 +35,7 @@ exports.Lexer = class Lexer
   # Before returning the token stream, run it through the [Rewriter](rewriter.html).
   tokenize: (code, opts = {}) ->
     @literate   = opts.literate  # Are we lexing literate CoffeeScript?
+    @numeric    = opts.numeric   # Are we lexing numeric CoffeeScript?
     @indent     = 0              # The current indentation level.
     @baseIndent = 0              # The overall minimum indentation level
     @indebt     = 0              # The over-indentation at the current level.
@@ -228,6 +229,8 @@ exports.Lexer = class Lexer
         @error "decimal literal '#{number}' must not be prefixed with '0'", length: lexedLength
       when /^0\d+/.test number
         @error "octal literal '#{number}' must be prefixed with '0o'", length: lexedLength
+      when not @numeric and /i$/.test number
+        @error "imaginary literal '#{number}' is only allowed in numeric mode"
 
     base = switch number.charAt 1
       when 'b' then 2
@@ -974,10 +977,10 @@ IDENTIFIER = /// ^
 ///
 
 NUMBER     = ///
-  ^ 0b[01]+    |              # binary
-  ^ 0o[0-7]+   |              # octal
-  ^ 0x[\da-f]+ |              # hex
-  ^ \d*\.?\d+ (?:e[+-]?\d+)?  # decimal
+  ^ 0b[01]+    |                 # binary
+  ^ 0o[0-7]+   |                 # octal
+  ^ 0x[\da-f]+ |                 # hex
+  ^ \d*\.?\d+ (?:e[+-]?\d+)? i?  # decimal
 ///i
 
 OPERATOR   = /// ^ (

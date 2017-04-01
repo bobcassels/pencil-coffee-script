@@ -53,7 +53,7 @@ CoffeeScript.load = (url, callback, options = {}, hold = false) ->
 # This happens on page load.
 runScripts = ->
   scripts = window.document.getElementsByTagName 'script'
-  coffeetypes = ['text/coffeescript', 'text/literate-coffeescript']
+  coffeetypes = ['text/coffeescript', 'text/literate-coffeescript', 'text/numeric-coffeescript']
   coffees = (s for s in scripts when s.type in coffeetypes)
   index = 0
 
@@ -66,7 +66,9 @@ runScripts = ->
 
   for script, i in coffees
     do (script, i) ->
-      options = literate: script.type is coffeetypes[1]
+      options =
+        literate: script.type is coffeetypes[1]
+        numeric:  script.type is coffeetypes[2]
       source = script.src or script.getAttribute('data-src')
       if source
         options.filename = source
