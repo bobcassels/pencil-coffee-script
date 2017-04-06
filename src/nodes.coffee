@@ -283,7 +283,7 @@ exports.Base = class Base
     [].concat @makeCode('('), fragments, @makeCode(')')
 
   # `fragmentsList` is an array of arrays of fragments. Each array in fragmentsList will be
-  # concatonated together, with `joinStr` added in between each, to produce a final flat array
+  # concatenated together, with `joinStr` added in between each, to produce a final flat array
   # of fragments.
   joinFragmentArrays: (fragmentsList, joinStr) ->
     answer = []
@@ -521,6 +521,19 @@ exports.Literal = class Literal extends Base
     " #{if @isStatement() then super() else @constructor.name}: #{@value}"
 
 exports.NumberLiteral = class NumberLiteral extends Literal
+  compileNode: (o) ->
+    if o.numeric
+      string = @value
+      # Note that negative non-decimal values will never get here.
+      base = switch string.charAt 1
+        when 'b' then 2
+        when 'o' then 8
+        when 'x' then 16
+        else 10
+      digits = if base == 10 then string else string[2..]
+      (numericValue o, digits, base).compileNode o
+    else
+      super o
 
 exports.InfinityLiteral = class InfinityLiteral extends NumberLiteral
   compileNode: ->
@@ -1731,8 +1744,20 @@ exports.Assign = class Assign extends Base
 
       return @compileSplice       o if @variable.isSplice()
       return @compileConditional  o if @context in ['||=', '&&=', '?=']
+<<<<<<< HEAD
       return @compileSpecialMath  o if @context in ['**=', '//=', '%%=']
 
+=======
+      return @compileSpecialMath  o if @context and
+                                       (@context in ['**=', '//=', '%%='] or
+                                        o.numeric and @context.match /^[-+*/%]=$/)
+    if @value instanceof Code
+      if @value.isStatic
+        @value.name = @variable.properties[0]
+      else if @variable.properties?.length >= 2
+        [properties..., prototype, name] = @variable.properties
+        @value.name = name if prototype.name?.value is 'prototype'
+>>>>>>> Add handling of more numeric operations.
     unless @context
       varBase = @variable.unwrapAll()
       unless varBase.isAssignable()
@@ -2518,29 +2543,79 @@ exports.Op = class Op extends Base
     call.do = yes
     call
 
+  compileNumericWrapperArithmetic: (o, wrapperName, name, numericFn, makejs) ->
+    wfn = new Value new Literal numericFunctionWrapper o, wrapperName, name, numericFn, makejs
+    new Call(wfn, [@first, @second]).compileNode o
+
+  compileNumericArithmetic: (o, name, numericFn) ->
+    compileNumericFunctionCall o, name, numericFn, [@first, @second]
+
   compileNode: (o) ->
     isChain = @isChainable() and @first.isChainable()
     # In chains, there's no need to wrap bare obj literals in parens,
     # as the chained expression is wrapped.
     @first.front = @front unless isChain
-    if @operator is 'delete' and o.scope.check(@first.unwrapAll().value)
+    op = @operator
+    if op is 'delete' and o.scope.check(@first.unwrapAll().value)
       @error 'delete operand may not be argument or var'
-    if @operator in ['--', '++']
+    if op in ['--', '++']
       message = isUnassignable @first.unwrapAll().value
       @first.error message if message
     return @compileContinuation o if @isYield() or @isAwait()
     return @compileUnary        o if @isUnary()
     return @compileChain        o if isChain
+<<<<<<< HEAD
     switch @operator
       when '?'  then @compileExistence o, @second.isDefaultValue
+=======
+    if o.numeric
+      # Handle operators that have complex behavior with strings.
+      switch op
+        when '+'
+          return @compileAddNumeric o
+        when '==='
+          # If either arg is a string, we can just use the Javascript comparison.
+          unless @first.isString() or @second.isString()
+            return @compileEqlNumeric o
+        when '!=='
+          # If either arg is a string, we can just use the Javascript comparison.
+          unless @first.isString() or @second.isString()
+            return @compileNeqNumeric o
+      relationName = {
+        '<':  'lt',
+        '<=': 'le',
+        '>':  'gt',
+        '>=': 'ge'
+        }[op]
+      return @compileNumericRelation o, relationName if relationName
+      numericFn = {
+        '/':  ['div'],
+        '*':  ['mul'],
+        '-':  ['sub'],
+        '**': ['expt', 'expt'],
+        '//': ['floordiv', 'div'],
+        # TODO: This isn't quite right.
+        '%':  ['modTruncate', 'mod0'],
+        '%%': ['mod', 'mod']
+        }[op]
+      if numericFn
+        return @compileNumericArithmetic o, numericFn[0], numericFn[1] or op
+    switch op
+      when '?'  then @compileExistence o
+>>>>>>> Add handling of more numeric operations.
       when '**' then @compilePower o
       when '//' then @compileFloorDivision o
       when '%%' then @compileModulo o
       else
         lhs = @first.compileToFragments o, LEVEL_OP
         rhs = @second.compileToFragments o, LEVEL_OP
+<<<<<<< HEAD
         answer = [].concat lhs, @makeCode(" #{@operator} "), rhs
         if o.level <= LEVEL_OP then answer else @wrapInParentheses answer
+=======
+        answer = [].concat lhs, @makeCode(" #{op} "), rhs
+        if o.level <= LEVEL_OP then answer else @wrapInBraces answer
+>>>>>>> Add handling of more numeric operations.
 
   # Mimic Python's chained comparisons when multiple comparison operators are
   # used sequentially. For example:
@@ -2548,11 +2623,18 @@ exports.Op = class Op extends Base
   #     bin/coffee -e 'console.log 50 < 65 > 10'
   #     true
   compileChain: (o) ->
+<<<<<<< HEAD
     [@first.second, shared] = @first.second.cache o
     fst = @first.compileToFragments o, LEVEL_OP
     fragments = fst.concat @makeCode(" #{if @invert then '&&' else '||'} "),
       (shared.compileToFragments o), @makeCode(" #{@operator} "), (@second.compileToFragments o, LEVEL_OP)
     @wrapInParentheses fragments
+=======
+    chainFirst = @first
+    [chainFirst.second, shared] = chainFirst.second.cache o
+    @first = new Value shared
+    (new Parens new Op((if @invert then '&&' else '||'), chainFirst, this)).compileNode o
+>>>>>>> Add handling of more numeric operations.
 
   # Keep reference to the left expression, unless this an existential assignment
   compileExistence: (o, checkOnlyUndefined) ->
@@ -2566,8 +2648,17 @@ exports.Op = class Op extends Base
 
   # Compile a unary **Op**.
   compileUnary: (o) ->
-    parts = []
     op = @operator
+    if o.numeric
+      switch op
+        when '+'
+          sfn = new Value new Literal utility 'SchemeNumber', o
+          return new Call(sfn, [@first]).compileNode o
+        when '-'
+          return compileNumericFunctionCall o, 'neg', '-', [@first]
+        when '--', '++'
+          return @compileIncDecNumeric o
+    parts = []
     parts.push [@makeCode op]
     if op is '!' and @first instanceof Existence
       @first.negated = not @first.negated
@@ -2615,8 +2706,87 @@ exports.Op = class Op extends Base
     mod = new Value new Literal utility 'modulo', o
     new Call(mod, [@first, @second]).compileToFragments o
 
+  compileAddNumeric: (o) ->
+    # We want toString() values for numbers, so call that explicitly.
+    schemeNumber = utility 'SchemeNumber', o
+    @compileNumericWrapperArithmetic o, 'add', 'add', '+',
+      (addFn) ->
+         """
+         function (a, b) {
+           if (typeof a === 'string') {
+             if (typeof b === 'string') {
+               return a + b;
+             } else {
+               return a + #{schemeNumber}(b).toString();
+             }
+           } else if (typeof b === 'string') {
+             return #{schemeNumber}(a).toString() + b;
+           }
+           return #{addFn}(a, b);
+         }
+         """
+
+  compileNumericRelation: (o, relationName) ->
+    relation = @operator
+    if @first.isNumber() or @second.isNumber()
+      # If either arg is a number, we can call the Scheme function directly.
+      return @compileNumericArithmetic o, relationName, relation
+    @compileNumericWrapperArithmetic o, relationName, relationName, relation,
+      (relationFn) ->
+         """
+         function (a, b) {
+           if (typeof a === 'string' and typeof b === 'string') {
+             return a #{relation} b;
+           }
+           return #{relationFn}(a, b);
+         }
+         """
+
+  compileEqlNumeric: (o) ->
+    isNumber = numericFunction o, 'isn', 'number?'
+    @compileNumericWrapperArithmetic o, 'eql', 'eql', '=',
+    (eqlFn) ->
+       """
+       function (a, b) {
+         if ((#{isNumber}(a) or typeof a === 'number') and
+             (#{isNumber}(b) or typeof b === 'number')) {
+           return #{eqlFn}(a, b);
+         }
+         return a === b;
+       }
+       """
+
+  compileNeqNumeric: (o) ->
+    isNumber = numericFunction o, 'isn', 'number?'
+    @compileNumericWrapperArithmetic o, 'neq', 'eql', '=',
+      (eqlFn) ->
+         """
+         function (a, b) {
+           if ((#{isNumber}(a) or typeof a === 'number') and
+               (#{isNumber}(b) or typeof b === 'number')) {
+             return !#{eqlFn}(a, b);
+           }
+           return a !== b;
+         }
+         """
+
+# Convert -- and ++ by converting to the extended form `a = a + 1` and then compile that.
+  compileIncDecNumeric: (o) ->
+    [left, right] = @first.cacheReference o
+    one = numericValue o, '1'
+    op = @operator[...-1]
+    name = {'+': 'add', '-': 'sub'}[op]
+    if @flip
+      # TODO: If the result isn't used, skip the extra work of saving the value.
+      ref = new IdentifierLiteral o.scope.freeVariable 'ref'
+      (new Block [
+         new Assign(left, numericFunctionCall o, name, op, [new Assign(ref, right), one]),
+         ref]).compileToFragments o
+    else
+      new Assign(left, numericFunctionCall o, name, op, [right, one]).compileToFragments o
+
   toString: (idt) ->
-    super idt, @constructor.name + ' ' + @operator
+    super idt, @constructor.name + ' ' + @operator + (if @flip then ' (postfix)' else '')
 
 #### In
 exports.In = class In extends Base
@@ -3104,6 +3274,10 @@ UTILITIES =
   slice  : -> '[].slice'
   splice : -> '[].splice'
 
+  SchemeNumber: -> """
+    typeof require === 'undefined' ? SchemeNumber : require('./schemeNumber').SchemeNumber
+  """
+
 # Levels indicate a node's position in the AST. Useful for knowing if
 # parens are necessary or superfluous.
 LEVEL_TOP    = 1  # ...;
@@ -3130,6 +3304,53 @@ utility = (name, o) ->
     ref = root.freeVariable name
     root.assign ref, UTILITIES[name] o
     root.utilities[name] = ref
+
+numericFunctionWrapper = (o, wrapperName, name, schemeFn, makejs) ->
+  ref = "__f_#{wrapperName}"
+  sref = numericFunction o, name, schemeFn
+  o.scope.root.assign ref, makejs(sref)
+  ref
+
+numericFunction = (o, name, schemeFn) ->
+  ref = "__#{name}"
+  schemeNumber = utility 'SchemeNumber', o
+  o.scope.root.assign ref, schemeNumber + ".fn['#{schemeFn}']"
+  ref
+
+numericValue = (o, string, radix = 10) ->
+  if radix != 10 and string.length <= 13
+    # Canonicalize small values.
+    string = String(parseInt(string, radix))
+    radix = 10
+  # Canonicalize number.
+  # string = string.
+           # Remove leading zeros.
+           # replace(/[\/+-](0+)[0-9]/, '').
+           # Remove integer 0 if there are fraction digits.
+           # replace(/^(0)\.[0-9]/, '').
+           # replace(/[^0-9](0)\.[0-9]/, '')
+  #          # Remove trailing fraction zeros.
+  #          replace(/\.[0-9]+(0+)$/, '').
+  #          replace(/\.[0-9]+(0+)[i\/+-]/, '').
+  name = string.
+         replace(/^\+/, '').
+         replace(/\//g, 'D').
+         replace(/-/g, 'M').
+         replace(/\+/g, 'P').
+         replace(/\./g, '_').
+         replace('I', 'i')
+  ref = "__n#{if radix == 10 then '' else radix}_#{name}"
+  stringToNumber = numericFunction o, 'snum', 'string->number'
+  args = if radix == 10 then "('#{string}')" else "('#{string}', #{radix})"
+  o.scope.root.assign ref, stringToNumber + args
+  new Value new Literal ref
+
+numericFunctionCall = (o, name, numericFn, args) ->
+  sfn = new Value new Literal numericFunction o, name, numericFn
+  new Call(sfn, args)
+
+compileNumericFunctionCall = (o, name, numericFn, args) ->
+  (numericFunctionCall o, name, numericFn, args).compileNode o
 
 multident = (code, tab) ->
   code = code.replace /\n/g, '$&' + tab
