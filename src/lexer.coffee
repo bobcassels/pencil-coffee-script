@@ -35,7 +35,9 @@ exports.Lexer = class Lexer
   # Before returning the token stream, run it through the [Rewriter](rewriter.html).
   tokenize: (code, opts = {}) ->
     @literate   = opts.literate  # Are we lexing literate CoffeeScript?
-    @numeric    = opts.numeric   # Are we lexing numeric CoffeeScript?
+    # Are we lexing numeric CoffeeScript?
+    # Also allow numeric extension (e.g. 1i) if we are only interested in the source map.
+    @numeric    = opts.numeric || opts.sourceMapOnly
     @indent     = 0              # The current indentation level.
     @baseIndent = 0              # The overall minimum indentation level
     @indebt     = 0              # The over-indentation at the current level.
