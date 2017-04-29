@@ -1744,20 +1744,9 @@ exports.Assign = class Assign extends Base
 
       return @compileSplice       o if @variable.isSplice()
       return @compileConditional  o if @context in ['||=', '&&=', '?=']
-<<<<<<< HEAD
-      return @compileSpecialMath  o if @context in ['**=', '//=', '%%=']
-
-=======
       return @compileSpecialMath  o if @context and
                                        (@context in ['**=', '//=', '%%='] or
                                         o.numeric and @context.match /^[-+*/%]=$/)
-    if @value instanceof Code
-      if @value.isStatic
-        @value.name = @variable.properties[0]
-      else if @variable.properties?.length >= 2
-        [properties..., prototype, name] = @variable.properties
-        @value.name = name if prototype.name?.value is 'prototype'
->>>>>>> Add handling of more numeric operations.
     unless @context
       varBase = @variable.unwrapAll()
       unless varBase.isAssignable()
@@ -2564,10 +2553,7 @@ exports.Op = class Op extends Base
     return @compileContinuation o if @isYield() or @isAwait()
     return @compileUnary        o if @isUnary()
     return @compileChain        o if isChain
-<<<<<<< HEAD
-    switch @operator
-      when '?'  then @compileExistence o, @second.isDefaultValue
-=======
+
     if o.numeric
       # Handle operators that have complex behavior with strings.
       switch op
@@ -2601,21 +2587,15 @@ exports.Op = class Op extends Base
       if numericFn
         return @compileNumericArithmetic o, numericFn[0], numericFn[1] or op
     switch op
-      when '?'  then @compileExistence o
->>>>>>> Add handling of more numeric operations.
+      when '?'  then @compileExistence o, @second.isDefaultValue
       when '**' then @compilePower o
       when '//' then @compileFloorDivision o
       when '%%' then @compileModulo o
       else
         lhs = @first.compileToFragments o, LEVEL_OP
         rhs = @second.compileToFragments o, LEVEL_OP
-<<<<<<< HEAD
-        answer = [].concat lhs, @makeCode(" #{@operator} "), rhs
-        if o.level <= LEVEL_OP then answer else @wrapInParentheses answer
-=======
         answer = [].concat lhs, @makeCode(" #{op} "), rhs
-        if o.level <= LEVEL_OP then answer else @wrapInBraces answer
->>>>>>> Add handling of more numeric operations.
+        if o.level <= LEVEL_OP then answer else @wrapInParentheses answer
 
   # Mimic Python's chained comparisons when multiple comparison operators are
   # used sequentially. For example:
@@ -2623,18 +2603,10 @@ exports.Op = class Op extends Base
   #     bin/coffee -e 'console.log 50 < 65 > 10'
   #     true
   compileChain: (o) ->
-<<<<<<< HEAD
-    [@first.second, shared] = @first.second.cache o
-    fst = @first.compileToFragments o, LEVEL_OP
-    fragments = fst.concat @makeCode(" #{if @invert then '&&' else '||'} "),
-      (shared.compileToFragments o), @makeCode(" #{@operator} "), (@second.compileToFragments o, LEVEL_OP)
-    @wrapInParentheses fragments
-=======
     chainFirst = @first
     [chainFirst.second, shared] = chainFirst.second.cache o
     @first = new Value shared
     (new Parens new Op((if @invert then '&&' else '||'), chainFirst, this)).compileNode o
->>>>>>> Add handling of more numeric operations.
 
   # Keep reference to the left expression, unless this an existential assignment
   compileExistence: (o, checkOnlyUndefined) ->
